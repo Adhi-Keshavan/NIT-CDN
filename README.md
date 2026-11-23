@@ -43,11 +43,11 @@ Materials are classified as raw or packaging. BOM quantities are **per batch**, 
 .\.venv\Scripts\python.exe manage.py seed_benchmark  # safe to run again
 ```
 
-Records are upserted by username, customer code, SKU, BOM product/material pair, and opening balance SKU. Existing records with those keys are updated; running twice creates no duplicates. Opening movements use source references like `benchmark:SKU`.
+Records are keyed by username, customer code, SKU, BOM product/material pair, and opening balance SKU. Running twice creates no duplicates. Posted opening balances are immutable; if an opening quantity must be corrected, post a dated stock adjustment rather than editing history. Opening movements use source references like `benchmark:SKU`.
 
 ## Stock ledger
 
-Each stock movement records an item, signed quantity, unit, date, source type, source document reference, and quantity converted to the item's base unit. A positive quantity adds stock; a negative quantity removes it. Product and material balances are the sum of `base_quantity`, optionally through a date:
+Each stock movement records an item, signed quantity, unit, date, source type and reference, an enforced foreign key to exactly one purchase, production run, shipped order, invoice, or stock adjustment, and quantity converted to the item's base unit. A positive quantity adds stock; a negative quantity removes it. Product and material balances are the sum of `base_quantity`, optionally through a date:
 
 ```python
 from erp.models import Item, StockMovement
@@ -55,18 +55,20 @@ item = Item.objects.get(sku="YOUR-SKU")
 balance = StockMovement.objects.balance_for(item)
 ```
 
-The ledger does not infer movements merely from draft purchases, runs, or orders. Record a movement when its source document is actually posted. Opening stock is created by `seed_benchmark`.
+Posting is explicit and transactional. In Django admin, save a purchase and select **Receive selected purchases and post stock** to add its material; save a production run with one actual consumption line for each BOM material and select **Complete selected runs and post stock** to subtract materials and add good packets; approve an order after the stock check, then select **Dispatch selected orders and post stock** to subtract finished goods. Stock adjustments have their own document and lines, posted with **Post selected stock adjustments**. Each action is safe to repeat, checks stock before an issue, and prevents editing posted quantities. Draft documents do not change stock.
 
 ## Current scope and next build step
 
-The Day 1 foundation covers the schema, Supabase connection, roles, exact benchmark master data, unit conversions, opening stock, and ledger queries. The Section 5 **transaction scenario is not yet implemented**: purchases, production runs, approvals, invoices, dispatch, payments, costing, exports, and audit logging still need posting workflows. Build production posting first, so one run automatically consumes actual materials and packaging, adds good packets, and reports yield and consumption variances. Then build stock-checked order approval, GST invoices, dispatch, payment allocation, and reports. The expected checks after those workflows are flour **120 kg**, oil **19.5 L**, pouches **306**, finished goods **238** after production and **88** after Retailer A dispatch, with a **32 packet** shortage for Distributor B.
+The ledger posting test now reproduces the Section 5 stock checks: flour **120 kg**, oil **19.5 L**, pouches **306**, finished goods **238** after production and **88** after Retailer A dispatch, with a **32 packet** shortage for Distributor B. It also checks the **−6%** yield and **+5%** oil variances. These transactions run in an isolated test database; `seed_benchmark` loads only master data and opening stock. The remaining application work is mobile order entry, GST invoice creation and PDF, payments, costing, exports, and audit logging. The admin actions are a working posting interface until dedicated role screens are built.
 
 ## Checks
 
 ```powershell
 .\.venv\Scripts\python.exe manage.py check
 .\.venv\Scripts\python.exe manage.py makemigrations --check --dry-run
+$env:DATABASE_URL='sqlite:///db.sqlite3'
 .\.venv\Scripts\python.exe manage.py test
+Remove-Item Env:DATABASE_URL
 ```
 
-The tests use the configured database. For isolated local tests, set `DATABASE_URL=sqlite:///db.sqlite3` in the environment before running them. The test suite checks both an illustrative fixture and the exact Section 5 master data, plus role access, conversions, and balances.
+The test command above temporarily selects local SQLite so Django does not create a test database in Supabase. The test suite checks seed idempotency, role access, unit conversion, ledger source links, idempotent posting, balance calculations, stock shortages, and posted-document immutability.

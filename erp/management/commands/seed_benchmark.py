@@ -10,7 +10,7 @@ from django.core.exceptions import ValidationError
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
-from erp.models import BOMLine, Customer, Item, Material, Product, StockMovement
+from erp.models import BOMLine, Customer, Item, Material, Product, StockAdjustment, StockAdjustmentLine, StockMovement
 from erp.units import Unit
 
 
@@ -180,6 +180,16 @@ class Command(BaseCommand):
                 movement_date = date.fromisoformat(required(row, "date", "opening_balances"))
             except (TypeError, ValueError) as exc:
                 raise CommandError(f"Invalid opening balance date for {sku}") from exc
+            adjustment, _ = StockAdjustment.objects.update_or_create(
+                reference=f"benchmark:{sku}",
+                defaults={"date": movement_date, "kind": StockAdjustment.Kind.OPENING, "note": "Section 5 opening balance"},
+            )
+            quantity = amount(required(row, "quantity", "opening_balances"), "Opening quantity")
+            unit = required(row, "unit", "opening_balances")
+            StockAdjustmentLine.objects.update_or_create(
+                adjustment=adjustment, line_number=1,
+                defaults={"item": item, "quantity": quantity, "unit": unit},
+            )
             movement, _ = StockMovement.objects.update_or_create(
                 item=item,
                 source_type=StockMovement.Source.OPENING,
@@ -187,8 +197,9 @@ class Command(BaseCommand):
                 line_number=1,
                 defaults={
                     "date": movement_date,
-                    "quantity": amount(required(row, "quantity", "opening_balances"), "Opening quantity"),
-                    "unit": required(row, "unit", "opening_balances"),
+                    "quantity": quantity,
+                    "unit": unit,
+                    "adjustment": adjustment,
                     "note": "Section 5 benchmark opening balance",
                 },
             )

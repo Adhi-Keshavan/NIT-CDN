@@ -9,6 +9,13 @@ from django.db.models.functions import Coalesce
 from .units import Unit, convert_quantity
 
 
+def _protect_posted_document(instance, fields):
+    if instance.pk and instance.stock_movements.exists():
+        original = type(instance).objects.get(pk=instance.pk)
+        if any(getattr(instance, field) != getattr(original, field) for field in fields):
+            raise ValidationError("Posted document fields cannot be changed; record a correcting adjustment instead.")
+
+
 class Customer(models.Model):
     code = models.CharField(max_length=40, unique=True)
     name = models.CharField(max_length=200)
@@ -34,6 +41,13 @@ class Item(models.Model):
     base_unit = models.CharField(max_length=6, choices=Unit.choices)
     is_active = models.BooleanField(default=True)
 
+    def save(self, *args, **kwargs):
+        if self.pk and self.movements.exists():
+            original = type(self).objects.get(pk=self.pk)
+            if any(getattr(self, field) != getattr(original, field) for field in ("sku", "kind", "base_unit")):
+                raise ValidationError("An item with stock history cannot change SKU, kind, or base unit.")
+        super().save(*args, **kwargs)
+
     def __str__(self):
         return f"{self.sku} — {self.name}"
 
@@ -57,6 +71,11 @@ class Product(models.Model):
         if self.item_id and self.item.kind != Item.Kind.PRODUCT:
             raise ValidationError({"item": "The item must have product kind."})
 
+    def save(self, *args, **kwargs):
+        if self.pk and type(self).objects.get(pk=self.pk).item_id != self.item_id:
+            raise ValidationError("A product's stock item cannot be reassigned.")
+        super().save(*args, **kwargs)
+
     def __str__(self):
         return str(self.item)
 
@@ -76,6 +95,11 @@ class Material(models.Model):
     def clean(self):
         if self.item_id and self.item.kind != Item.Kind.MATERIAL:
             raise ValidationError({"item": "The item must have material kind."})
+
+    def save(self, *args, **kwargs):
+        if self.pk and type(self).objects.get(pk=self.pk).item_id != self.item_id:
+            raise ValidationError("A material's stock item cannot be reassigned.")
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return str(self.item)
@@ -122,6 +146,10 @@ class Purchase(models.Model):
         if self.material_id:
             convert_quantity(self.quantity, self.unit, self.material.item.base_unit)
 
+    def save(self, *args, **kwargs):
+        _protect_posted_document(self, ("reference", "date", "supplier_name", "material_id", "quantity", "unit", "unit_cost", "status"))
+        super().save(*args, **kwargs)
+
     def __str__(self):
         return self.reference
 
@@ -147,9 +175,17 @@ class ProductionRun(models.Model):
 
     def clean(self):
         if self.product_id:
-            convert_quantity(self.planned_quantity, self.unit, self.product.item.base_unit)
-        if self.completed_quantity > self.planned_quantity:
-            raise ValidationError({"completed_quantity": "Cannot exceed planned quantity."})
+            convert_quantity(self.planned_quantity, self.unit, self.product.item.base_unit, packets_per_carton=self.product.packets_per_carton)
+
+    def save(self, *args, **kwargs):
+        _protect_posted_document(self, ("reference", "date", "product_id", "planned_quantity", "completed_quantity", "unit", "status"))
+        super().save(*args, **kwargs)
+
+    @property
+    def yield_variance_percent(self):
+        planned = convert_quantity(self.planned_quantity, self.unit, self.product.item.base_unit, packets_per_carton=self.product.packets_per_carton)
+        actual = convert_quantity(self.completed_quantity, self.unit, self.product.item.base_unit, packets_per_carton=self.product.packets_per_carton)
+        return (actual - planned) * Decimal("100") / planned
 
     def __str__(self):
         return self.reference
@@ -166,6 +202,10 @@ class Order(models.Model):
     customer = models.ForeignKey(Customer, on_delete=models.PROTECT)
     salesperson = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.DRAFT)
+
+    def save(self, *args, **kwargs):
+        _protect_posted_document(self, ("reference", "date", "customer_id", "salesperson_id", "status"))
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return self.reference
@@ -188,7 +228,59 @@ class OrderLine(models.Model):
 
     def clean(self):
         if self.product_id:
-            convert_quantity(self.quantity, self.unit, self.product.item.base_unit)
+            convert_quantity(self.quantity, self.unit, self.product.item.base_unit, packets_per_carton=self.product.packets_per_carton)
+
+    def save(self, *args, **kwargs):
+        if self.order_id and self.order.stock_movements.exists():
+            raise ValidationError("Dispatched order lines cannot be edited.")
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        if self.order.stock_movements.exists():
+            raise ValidationError("Dispatched order lines cannot be deleted.")
+        return super().delete(*args, **kwargs)
+
+
+class ProductionConsumption(models.Model):
+    run = models.ForeignKey(ProductionRun, on_delete=models.CASCADE, related_name="consumptions")
+    material = models.ForeignKey(Material, on_delete=models.PROTECT)
+    quantity = models.DecimalField(max_digits=18, decimal_places=6, help_text="Actual issued quantity, including wastage")
+    unit = models.CharField(max_length=6, choices=Unit.choices)
+    wastage_quantity = models.DecimalField(max_digits=18, decimal_places=6, default=0)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["run", "material"], name="unique_run_material"),
+            models.CheckConstraint(condition=models.Q(quantity__gt=0), name="positive_consumption_quantity"),
+            models.CheckConstraint(condition=models.Q(wastage_quantity__gte=0), name="nonnegative_consumption_wastage"),
+        ]
+
+    def clean(self):
+        if self.material_id:
+            convert_quantity(self.quantity, self.unit, self.material.item.base_unit)
+        if self.wastage_quantity > self.quantity:
+            raise ValidationError({"wastage_quantity": "Wastage cannot exceed issued quantity."})
+
+    def save(self, *args, **kwargs):
+        if self.run_id and self.run.stock_movements.exists():
+            raise ValidationError("Posted production consumption cannot be edited.")
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        if self.run.stock_movements.exists():
+            raise ValidationError("Posted production consumption cannot be deleted.")
+        return super().delete(*args, **kwargs)
+
+    @property
+    def variance_percent(self):
+        bom_line = BOMLine.objects.get(product=self.run.product, material=self.material)
+        batches = convert_quantity(
+            self.run.planned_quantity, self.run.unit, self.run.product.item.base_unit,
+            packets_per_carton=self.run.product.packets_per_carton,
+        ) / Decimal(self.run.product.expected_yield_per_batch)
+        standard = convert_quantity(bom_line.quantity, bom_line.unit, self.material.item.base_unit) * batches
+        actual = convert_quantity(self.quantity, self.unit, self.material.item.base_unit)
+        return (actual - standard) * Decimal("100") / standard
 
 
 class Invoice(models.Model):
@@ -224,6 +316,61 @@ class Payment(models.Model):
         return self.reference
 
 
+class StockAdjustment(models.Model):
+    class Kind(models.TextChoices):
+        OPENING = "opening", "Opening balance"
+        ADJUSTMENT = "adjustment", "Stock adjustment"
+
+    reference = models.CharField(max_length=100, unique=True)
+    date = models.DateField()
+    kind = models.CharField(max_length=10, choices=Kind.choices)
+    note = models.TextField(blank=True)
+
+    def save(self, *args, **kwargs):
+        if self.pk and self.stock_movements.exists():
+            original = type(self).objects.get(pk=self.pk)
+            if self.reference != original.reference or self.kind != original.kind or self.date != original.date:
+                raise ValidationError("A posted adjustment's reference, kind, and date cannot be changed.")
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return self.reference
+
+
+class StockAdjustmentLine(models.Model):
+    adjustment = models.ForeignKey(StockAdjustment, on_delete=models.CASCADE, related_name="lines")
+    line_number = models.PositiveIntegerField()
+    item = models.ForeignKey(Item, on_delete=models.PROTECT)
+    quantity = models.DecimalField(max_digits=18, decimal_places=6)
+    unit = models.CharField(max_length=6, choices=Unit.choices)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["adjustment", "line_number"], name="unique_adjustment_line"),
+            models.CheckConstraint(condition=~models.Q(quantity=0), name="nonzero_adjustment_line"),
+        ]
+
+    def clean(self):
+        if self.item_id:
+            carton_size = self.item.product.packets_per_carton if self.item.kind == Item.Kind.PRODUCT else None
+            convert_quantity(self.quantity, self.unit, self.item.base_unit, packets_per_carton=carton_size)
+
+    def save(self, *args, **kwargs):
+        if self.adjustment_id and self.adjustment.stock_movements.exists():
+            if not self.pk:
+                raise ValidationError("Posted adjustment lines cannot be added.")
+            original = type(self).objects.get(pk=self.pk)
+            if any(getattr(self, field) != getattr(original, field) for field in ("adjustment_id", "line_number", "item_id", "quantity", "unit")):
+                raise ValidationError("Posted adjustment lines cannot be edited.")
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        if self.adjustment.stock_movements.exists():
+            raise ValidationError("Posted adjustment lines cannot be deleted.")
+        return super().delete(*args, **kwargs)
+
+
 class StockMovementQuerySet(models.QuerySet):
     def balance_for(self, item, as_of=None):
         movements = self.filter(item=item)
@@ -241,6 +388,7 @@ class StockMovement(models.Model):
         PURCHASE = "purchase", "Purchase"
         PRODUCTION = "production", "Production run"
         ORDER = "order", "Order"
+        INVOICE = "invoice", "Invoice"
         ADJUSTMENT = "adjustment", "Adjustment"
 
     item = models.ForeignKey(Item, on_delete=models.PROTECT, related_name="movements")
@@ -250,6 +398,11 @@ class StockMovement(models.Model):
     date = models.DateField(db_index=True)
     source_type = models.CharField(max_length=12, choices=Source.choices)
     source_reference = models.CharField(max_length=100)
+    adjustment = models.ForeignKey(StockAdjustment, on_delete=models.PROTECT, related_name="stock_movements", null=True, blank=True)
+    purchase = models.ForeignKey(Purchase, on_delete=models.PROTECT, related_name="stock_movements", null=True, blank=True)
+    production_run = models.ForeignKey(ProductionRun, on_delete=models.PROTECT, related_name="stock_movements", null=True, blank=True)
+    order = models.ForeignKey(Order, on_delete=models.PROTECT, related_name="stock_movements", null=True, blank=True)
+    invoice = models.ForeignKey(Invoice, on_delete=models.PROTECT, related_name="stock_movements", null=True, blank=True)
     line_number = models.PositiveIntegerField(default=1)
     note = models.TextField(blank=True)
 
@@ -261,13 +414,78 @@ class StockMovement(models.Model):
             models.UniqueConstraint(fields=["source_type", "source_reference", "item", "line_number"], name="unique_stock_source_line"),
             models.CheckConstraint(condition=~models.Q(quantity=0), name="nonzero_movement_quantity"),
             models.CheckConstraint(condition=~models.Q(source_reference=""), name="nonempty_stock_source_reference"),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(source_type__in=["opening", "adjustment"], adjustment__isnull=False, purchase__isnull=True, production_run__isnull=True, order__isnull=True, invoice__isnull=True)
+                    | models.Q(source_type="purchase", adjustment__isnull=True, purchase__isnull=False, production_run__isnull=True, order__isnull=True, invoice__isnull=True)
+                    | models.Q(source_type="production", adjustment__isnull=True, purchase__isnull=True, production_run__isnull=False, order__isnull=True, invoice__isnull=True)
+                    | models.Q(source_type="order", adjustment__isnull=True, purchase__isnull=True, production_run__isnull=True, order__isnull=False, invoice__isnull=True)
+                    | models.Q(source_type="invoice", adjustment__isnull=True, purchase__isnull=True, production_run__isnull=True, order__isnull=True, invoice__isnull=False)
+                ),
+                name="stock_movement_has_document",
+            ),
         ]
+
+    @property
+    def source_document(self):
+        for field in ("adjustment", "purchase", "production_run", "order", "invoice"):
+            if getattr(self, f"{field}_id") is not None:
+                return getattr(self, field)
+        return None
 
     def clean(self):
         if not (self.source_reference or "").strip():
             raise ValidationError({"source_reference": "A source document reference is required."})
         if self.quantity == 0:
             raise ValidationError({"quantity": "A movement cannot have zero quantity."})
+        source_fields = {
+            self.Source.OPENING: "adjustment",
+            self.Source.ADJUSTMENT: "adjustment",
+            self.Source.PURCHASE: "purchase",
+            self.Source.PRODUCTION: "production_run",
+            self.Source.ORDER: "order",
+            self.Source.INVOICE: "invoice",
+        }
+        linked = [field for field in ("adjustment", "purchase", "production_run", "order", "invoice") if getattr(self, f"{field}_id") is not None]
+        expected_field = source_fields.get(self.source_type)
+        if linked != [expected_field]:
+            raise ValidationError("Exactly one matching source document must be linked to each movement.")
+        document = getattr(self, expected_field)
+        if self.source_type in {self.Source.OPENING, self.Source.ADJUSTMENT} and document.kind != self.source_type:
+            raise ValidationError("Adjustment kind must match the movement source type.")
+        document_reference = document.number if expected_field == "invoice" else document.reference
+        if self.source_reference != document_reference:
+            raise ValidationError({"source_reference": "Reference must match the linked document."})
+        if self.source_type in {self.Source.OPENING, self.Source.ADJUSTMENT}:
+            line = document.lines.filter(line_number=self.line_number).first()
+            if line is None or line.item_id != self.item_id or line.quantity != self.quantity or line.unit != self.unit:
+                raise ValidationError("Adjustment movement must match its document line.")
+        if self.source_type == self.Source.PURCHASE:
+            if (
+                document.status != Purchase.Status.RECEIVED
+                or self.item_id != document.material.item_id
+                or self.quantity != document.quantity
+                or self.unit != document.unit
+            ):
+                raise ValidationError("Purchase movements must add the received material.")
+        if self.source_type == self.Source.PRODUCTION:
+            if document.status != ProductionRun.Status.COMPLETED:
+                raise ValidationError("Production movements require a completed run.")
+            if self.item_id == document.product.item_id:
+                if self.quantity != document.completed_quantity or self.unit != document.unit:
+                    raise ValidationError("Finished output must match the run's good output.")
+            else:
+                consumption = document.consumptions.filter(material__item_id=self.item_id).first()
+                if consumption is None or self.quantity != -consumption.quantity or self.unit != consumption.unit:
+                    raise ValidationError("Material issue must match actual run consumption.")
+        if self.source_type == self.Source.ORDER:
+            line = document.lines.filter(line_number=self.line_number).first()
+            if document.status != Order.Status.SHIPPED or line is None or self.item_id != line.product.item_id or self.quantity != -line.quantity or self.unit != line.unit:
+                raise ValidationError("Order dispatch must match its shipped order line.")
+        if self.source_type == self.Source.INVOICE:
+            line = document.order.lines.filter(line_number=self.line_number).first()
+            if line is None or self.item_id != line.product.item_id or self.quantity != -line.quantity or self.unit != line.unit:
+                raise ValidationError("Invoice movement must match its order line.")
         if self.item_id:
             carton_size = None
             if self.item.kind == Item.Kind.PRODUCT and hasattr(self.item, "product"):
@@ -276,6 +494,11 @@ class StockMovement(models.Model):
 
     def save(self, *args, **kwargs):
         self.full_clean()
+        if self.pk:
+            original = type(self).objects.get(pk=self.pk)
+            immutable = ("item_id", "quantity", "unit", "date", "source_type", "source_reference", "line_number", "adjustment_id", "purchase_id", "production_run_id", "order_id", "invoice_id", "note")
+            if any(getattr(self, field) != getattr(original, field) for field in immutable):
+                raise ValidationError("Posted stock movements are immutable; record a correcting adjustment.")
         if kwargs.get("update_fields") is not None:
             kwargs["update_fields"] = set(kwargs["update_fields"]) | {"base_quantity"}
         super().save(*args, **kwargs)

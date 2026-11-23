@@ -7,10 +7,16 @@ from pathlib import Path
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
 from django.core.management import call_command
+from django.core.management.base import CommandError
+from django.db import IntegrityError, transaction
 from django.test import TestCase
 from django.urls import reverse
 
-from .models import BOMLine, Customer, Item, Material, Product, StockMovement
+from .ledger import approve_order, complete_production_run, dispatch_order, post_adjustment, receive_purchase, stock_shortages_for_order
+from .models import (
+    BOMLine, Customer, Item, Material, Order, OrderLine, Product,
+    ProductionConsumption, ProductionRun, Purchase, StockAdjustment, StockAdjustmentLine, StockMovement,
+)
 from .units import Unit, convert_quantity
 
 
@@ -45,34 +51,73 @@ class UnitTests(TestCase):
 class LedgerTests(TestCase):
     def setUp(self):
         self.item = Item.objects.create(sku="M-001", name="Material", kind=Item.Kind.MATERIAL, base_unit=Unit.KILOGRAM)
+        self.opening = StockAdjustment.objects.create(reference="opening:M-001", date=date(2026, 1, 1), kind=StockAdjustment.Kind.OPENING)
+        self.issue = StockAdjustment.objects.create(reference="ADJ-1", date=date(2026, 1, 2), kind=StockAdjustment.Kind.ADJUSTMENT)
+        StockAdjustmentLine.objects.create(adjustment=self.opening, line_number=1, item=self.item, quantity=Decimal("2"), unit=Unit.KILOGRAM)
+        StockAdjustmentLine.objects.create(adjustment=self.issue, line_number=1, item=self.item, quantity=Decimal("-500"), unit=Unit.GRAM)
 
     def test_opening_balance_and_dated_signed_movements(self):
         StockMovement.objects.create(
             item=self.item, quantity=Decimal("2"), unit=Unit.KILOGRAM,
             date=date(2026, 1, 1), source_type=StockMovement.Source.OPENING,
-            source_reference="opening:M-001",
+            source_reference="opening:M-001", adjustment=self.opening,
         )
         StockMovement.objects.create(
             item=self.item, quantity=Decimal("-500"), unit=Unit.GRAM,
-            date=date(2026, 1, 2), source_type=StockMovement.Source.PRODUCTION,
-            source_reference="RUN-001",
+            date=date(2026, 1, 2), source_type=StockMovement.Source.ADJUSTMENT,
+            source_reference="ADJ-1", adjustment=self.issue,
         )
         self.assertEqual(StockMovement.objects.balance_for(self.item, date(2026, 1, 1)), Decimal("2"))
         self.assertEqual(StockMovement.objects.balance_for(self.item), Decimal("1.5"))
-        self.assertEqual(StockMovement.objects.get(source_type=StockMovement.Source.PRODUCTION).base_quantity, Decimal("-0.5"))
+        self.assertEqual(StockMovement.objects.get(source_type=StockMovement.Source.ADJUSTMENT).base_quantity, Decimal("-0.5"))
 
     def test_rejects_incompatible_unit_and_missing_source(self):
         with self.assertRaises(ValidationError):
             StockMovement.objects.create(
                 item=self.item, quantity=1, unit=Unit.EACH, date=date.today(),
-                source_type=StockMovement.Source.ADJUSTMENT, source_reference="ADJ-1",
+                source_type=StockMovement.Source.ADJUSTMENT, source_reference="ADJ-1", adjustment=self.issue,
             )
         with self.assertRaises(ValidationError):
             StockMovement.objects.create(
                 item=self.item, quantity=1, unit=Unit.KILOGRAM, date=date.today(),
-                source_type=StockMovement.Source.ADJUSTMENT, source_reference="",
+                source_type=StockMovement.Source.ADJUSTMENT, source_reference="", adjustment=self.issue,
             )
         self.assertEqual(StockMovement.objects.count(), 0)
+
+    def test_requires_a_real_matching_source_document(self):
+        with self.assertRaises(ValidationError):
+            StockMovement.objects.create(
+                item=self.item, quantity=1, unit=Unit.KILOGRAM, date=date(2026, 1, 2),
+                source_type=StockMovement.Source.PURCHASE, source_reference="PUR-1",
+                adjustment=self.issue,
+            )
+        self.assertEqual(StockMovement.objects.count(), 0)
+
+    def test_database_rejects_a_movement_without_a_document(self):
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                StockMovement.objects.bulk_create([StockMovement(
+                    item=self.item, quantity=Decimal("1"), unit=Unit.KILOGRAM,
+                    base_quantity=Decimal("1"), date=date(2026, 1, 2),
+                    source_type=StockMovement.Source.ADJUSTMENT, source_reference="missing",
+                )])
+
+    def test_adjustment_posting_is_idempotent_and_lines_are_locked(self):
+        post_adjustment(self.opening)
+        post_adjustment(self.issue)
+        post_adjustment(self.issue)
+        self.assertEqual(StockMovement.objects.count(), 2)
+        self.assertEqual(StockMovement.objects.balance_for(self.item), Decimal("1.5"))
+        line = self.issue.lines.get()
+        line.quantity = Decimal("-600")
+        with self.assertRaises(ValidationError):
+            line.save()
+
+    def test_item_base_unit_cannot_change_after_stock_is_posted(self):
+        post_adjustment(self.opening)
+        self.item.base_unit = Unit.GRAM
+        with self.assertRaises(ValidationError):
+            self.item.save()
 
 
 class BenchmarkSeedTests(TestCase):
@@ -96,14 +141,15 @@ class BenchmarkSeedTests(TestCase):
         self.assertEqual(StockMovement.objects.balance_for(material_item), Decimal("2"))
         self.assertEqual(StockMovement.objects.balance_for(Item.objects.get(sku="P-001")), Decimal("10"))
 
-    def test_seed_updates_existing_business_keys(self):
+    def test_seed_refuses_to_rewrite_posted_opening_stock(self):
         call_command("seed_benchmark", file=self.path)
         data = dict(SAMPLE_BENCHMARK)
         data["opening_balances"] = [dict(SAMPLE_BENCHMARK["opening_balances"][0], quantity="3"), SAMPLE_BENCHMARK["opening_balances"][1]]
         self.path.write_text(json.dumps(data), encoding="utf-8")
-        call_command("seed_benchmark", file=self.path)
+        with self.assertRaises(CommandError):
+            call_command("seed_benchmark", file=self.path)
         self.assertEqual(StockMovement.objects.count(), 2)
-        self.assertEqual(StockMovement.objects.balance_for(Item.objects.get(sku="M-001")), Decimal("3"))
+        self.assertEqual(StockMovement.objects.balance_for(Item.objects.get(sku="M-001")), Decimal("2"))
 
     def test_all_three_roles_can_log_in_and_permissions_apply(self):
         call_command("seed_benchmark", file=self.path)
@@ -164,3 +210,106 @@ class ExactBenchmarkTests(TestCase):
             ("PKG-POUCH-200G", "500"), ("PKG-CARTON-20", "30"), ("MURUKKU-200G", "50"),
         ):
             self.assertEqual(StockMovement.objects.balance_for(Item.objects.get(sku=sku)), Decimal(expected))
+
+
+class PostingTests(TestCase):
+    def setUp(self):
+        call_command("seed_benchmark", file=Path(__file__).resolve().parent.parent / "data" / "benchmark.json")
+
+    def balance(self, sku):
+        return StockMovement.objects.balance_for(Item.objects.get(sku=sku))
+
+    def test_section_five_purchase_production_dispatch_and_shortage(self):
+        flour = Material.objects.get(item__sku="MAT-FLOUR")
+        purchase = Purchase.objects.create(
+            reference="PUR-FLOUR-60", date=date(2026, 11, 2), supplier_name="Demo supplier",
+            material=flour, quantity=Decimal("60"), unit=Unit.KILOGRAM,
+            unit_cost=Decimal("45"),
+        )
+        receive_purchase(purchase)
+        receive_purchase(purchase)
+        self.assertEqual(purchase.stock_movements.count(), 1)
+        self.assertEqual(self.balance("MAT-FLOUR"), Decimal("160"))
+        with self.assertRaises(ValidationError):
+            StockMovement.objects.create(
+                item=flour.item, quantity=Decimal("30"), unit=Unit.KILOGRAM,
+                date=purchase.date, source_type=StockMovement.Source.PURCHASE,
+                source_reference=purchase.reference, purchase=purchase, line_number=2,
+            )
+
+        product = Product.objects.get(item__sku="MURUKKU-200G")
+        run = ProductionRun.objects.create(
+            reference="RUN-MURUKKU-1", date=date(2026, 11, 2), product=product,
+            planned_quantity=Decimal("200"), completed_quantity=Decimal("188"), unit=Unit.PACKET,
+        )
+        actuals = (
+            ("MAT-FLOUR", "40", Unit.KILOGRAM, "0"),
+            ("MAT-OIL", "10.5", Unit.LITRE, "0"),
+            ("MAT-SPICE", "1.2", Unit.KILOGRAM, "0"),
+            ("PKG-POUCH-200G", "194", Unit.PIECE, "6"),
+            ("PKG-CARTON-20", "9", Unit.PIECE, "0"),
+        )
+        for sku, quantity, unit, wastage in actuals:
+            ProductionConsumption.objects.create(
+                run=run, material=Material.objects.get(item__sku=sku),
+                quantity=Decimal(quantity), unit=unit, wastage_quantity=Decimal(wastage),
+            )
+        complete_production_run(run)
+        complete_production_run(run)
+        self.assertEqual(run.stock_movements.count(), 6)
+        self.assertEqual(self.balance("MAT-FLOUR"), Decimal("120"))
+        self.assertEqual(self.balance("MAT-OIL"), Decimal("19.5"))
+        self.assertEqual(self.balance("PKG-POUCH-200G"), Decimal("306"))
+        self.assertEqual(self.balance("MURUKKU-200G"), Decimal("238"))
+        self.assertEqual(ProductionRun.objects.get(pk=run.pk).yield_variance_percent, Decimal("-6"))
+        self.assertEqual(run.consumptions.get(material__item__sku="MAT-OIL").variance_percent, Decimal("5"))
+        self.assertTrue(all(movement.source_document.pk == run.pk for movement in run.stock_movements.all()))
+
+        retailer_order = Order.objects.create(
+            reference="ORD-RETAILER-A", date=date(2026, 11, 3),
+            customer=Customer.objects.get(code="RETAILER-A"),
+            salesperson=get_user_model().objects.get(username="salesman_a"),
+        )
+        OrderLine.objects.create(
+            order=retailer_order, line_number=1, product=product,
+            quantity=Decimal("150"), unit=Unit.PACKET, unit_price=Decimal("50"),
+        )
+        approve_order(retailer_order)
+        dispatch_order(retailer_order)
+        dispatch_order(retailer_order)
+        self.assertEqual(retailer_order.stock_movements.count(), 1)
+        self.assertEqual(self.balance("MURUKKU-200G"), Decimal("88"))
+
+        distributor_order = Order.objects.create(
+            reference="ORD-DISTRIBUTOR-B", date=date(2026, 11, 3),
+            customer=Customer.objects.get(code="DISTRIBUTOR-B"),
+            salesperson=get_user_model().objects.get(username="salesman_b"),
+        )
+        OrderLine.objects.create(
+            order=distributor_order, line_number=1, product=product,
+            quantity=Decimal("120"), unit=Unit.PACKET, unit_price=Decimal("50"),
+        )
+        self.assertEqual(stock_shortages_for_order(distributor_order), {"MURUKKU-200G": Decimal("32")})
+        with self.assertRaises(ValidationError):
+            approve_order(distributor_order)
+        self.assertEqual(Order.objects.get(pk=distributor_order.pk).status, Order.Status.DRAFT)
+
+        purchase.quantity = Decimal("61")
+        with self.assertRaises(ValidationError):
+            purchase.save()
+        posted_run = ProductionRun.objects.get(pk=run.pk)
+        posted_run.completed_quantity = Decimal("190")
+        with self.assertRaises(ValidationError):
+            posted_run.save()
+        oil_issue = run.consumptions.get(material__item__sku="MAT-OIL")
+        oil_issue.quantity = Decimal("11")
+        with self.assertRaises(ValidationError):
+            oil_issue.save()
+        posted_line = retailer_order.lines.get(line_number=1)
+        posted_line.quantity = Decimal("151")
+        with self.assertRaises(ValidationError):
+            posted_line.save()
+        dispatch_movement = retailer_order.stock_movements.get()
+        dispatch_movement.quantity = Decimal("-149")
+        with self.assertRaises(ValidationError):
+            dispatch_movement.save()
