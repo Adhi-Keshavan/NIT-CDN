@@ -1,0 +1,10 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Dashboard</title></head>
+<body><h1>Dashboard</h1><p>Signed in as {{ user.username }} ({{ user.get_role_display }}).</p>
+<nav>
+{% if user.role == 'salesman' or user.role == 'admin' %}<a href="{% url 'sales' %}">Sales</a>{% endif %}
+{% if user.role == 'production' or user.role == 'admin' %}<a href="{% url 'production' %}">Production</a>{% endif %}
+{% if user.role == 'admin' %}<a href="{% url 'management' %}">Management</a>{% endif %}
+</nav>
+<form method="post" action="{% url 'logout' %}">{% csrf_token %}<button type="submit">Sign out</button></form>
+</body></html>

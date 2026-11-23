@@ -1,0 +1,37 @@
+{
+  "users": [
+    {"username": "salesman_a", "password": "BenchmarkDemo2026!", "role": "salesman", "first_name": "Salesman", "last_name": "A"},
+    {"username": "salesman_b", "password": "BenchmarkDemo2026!", "role": "salesman", "first_name": "Salesman", "last_name": "B"},
+    {"username": "factory_admin", "password": "BenchmarkDemo2026!", "role": "admin", "first_name": "Factory", "last_name": "Admin"},
+    {"username": "production_supervisor", "password": "BenchmarkDemo2026!", "role": "production", "first_name": "Production", "last_name": "Supervisor"}
+  ],
+  "customers": [
+    {"code": "RETAILER-A", "name": "Retailer A", "state": "Tamil Nadu", "state_code": "33"},
+    {"code": "DISTRIBUTOR-B", "name": "Distributor B", "state": "Karnataka", "state_code": "29"}
+  ],
+  "materials": [
+    {"sku": "MAT-FLOUR", "name": "Flour", "base_unit": "kg", "standard_cost": "42.00", "category": "raw"},
+    {"sku": "MAT-OIL", "name": "Cooking oil", "base_unit": "l", "standard_cost": "140.00", "category": "raw"},
+    {"sku": "MAT-SPICE", "name": "Salt and spice mix", "base_unit": "kg", "standard_cost": "200.00", "category": "raw"},
+    {"sku": "PKG-POUCH-200G", "name": "200 g pouch", "base_unit": "piece", "standard_cost": "2.50", "category": "packaging"},
+    {"sku": "PKG-CARTON-20", "name": "Carton (holds 20 packets)", "base_unit": "piece", "standard_cost": "15.00", "category": "packaging"}
+  ],
+  "products": [
+    {"sku": "MURUKKU-200G", "name": "Murukku 200 g", "base_unit": "packet", "selling_price": "50.00", "expected_yield_per_batch": 200, "packets_per_carton": 20, "gst_rate": "5.00"}
+  ],
+  "bom": [
+    {"product_sku": "MURUKKU-200G", "material_sku": "MAT-FLOUR", "quantity": "40", "unit": "kg"},
+    {"product_sku": "MURUKKU-200G", "material_sku": "MAT-OIL", "quantity": "10", "unit": "l"},
+    {"product_sku": "MURUKKU-200G", "material_sku": "MAT-SPICE", "quantity": "1.2", "unit": "kg"},
+    {"product_sku": "MURUKKU-200G", "material_sku": "PKG-POUCH-200G", "quantity": "200", "unit": "piece"},
+    {"product_sku": "MURUKKU-200G", "material_sku": "PKG-CARTON-20", "quantity": "10", "unit": "piece"}
+  ],
+  "opening_balances": [
+    {"sku": "MAT-FLOUR", "quantity": "100", "unit": "kg", "date": "2026-11-01"},
+    {"sku": "MAT-OIL", "quantity": "30", "unit": "l", "date": "2026-11-01"},
+    {"sku": "MAT-SPICE", "quantity": "5", "unit": "kg", "date": "2026-11-01"},
+    {"sku": "PKG-POUCH-200G", "quantity": "500", "unit": "piece", "date": "2026-11-01"},
+    {"sku": "PKG-CARTON-20", "quantity": "30", "unit": "piece", "date": "2026-11-01"},
+    {"sku": "MURUKKU-200G", "quantity": "50", "unit": "packet", "date": "2026-11-01"}
+  ]
+}
