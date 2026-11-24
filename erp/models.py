@@ -30,6 +30,23 @@ class Customer(models.Model):
         return f"{self.code} — {self.name}"
 
 
+class CompanyProfile(models.Model):
+    name = models.CharField(max_length=200)
+    address = models.TextField()
+    state = models.CharField(max_length=50)
+    state_code = models.CharField(max_length=2)
+    gstin = models.CharField(max_length=15)
+
+    def clean(self):
+        if len(self.state_code) != 2 or not self.state_code.isdigit():
+            raise ValidationError({"state_code": "Enter a two-digit GST state code."})
+        if len(self.gstin) != 15 or self.gstin[:2] != self.state_code or not self.gstin[2:].isalnum():
+            raise ValidationError({"gstin": "Enter a 15-character GSTIN beginning with the state code."})
+
+    def __str__(self):
+        return self.name
+
+
 class Item(models.Model):
     class Kind(models.TextChoices):
         PRODUCT = "product", "Product"
@@ -237,14 +254,25 @@ class Order(models.Model):
         DRAFT = "draft", "Draft"
         CONFIRMED = "confirmed", "Confirmed"
         SHIPPED = "shipped", "Shipped"
+        REJECTED = "rejected", "Rejected"
 
     reference = models.CharField(max_length=60, unique=True)
     date = models.DateField()
     customer = models.ForeignKey(Customer, on_delete=models.PROTECT)
     salesperson = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.DRAFT)
+    rejection_reason = models.TextField(blank=True)
+    reviewed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True, related_name="reviewed_orders")
+    reviewed_at = models.DateTimeField(null=True, blank=True)
 
     def save(self, *args, **kwargs):
+        if self.pk:
+            original = type(self).objects.get(pk=self.pk)
+            if original.status != self.Status.DRAFT and any(
+                getattr(self, field) != getattr(original, field)
+                for field in ("reference", "date", "customer_id", "salesperson_id")
+            ):
+                raise ValidationError("Reviewed orders cannot change their customer, date, reference, or salesperson.")
         _protect_posted_document(self, ("reference", "date", "customer_id", "salesperson_id", "status"))
         super().save(*args, **kwargs)
 
@@ -272,13 +300,13 @@ class OrderLine(models.Model):
             convert_quantity(self.quantity, self.unit, self.product.item.base_unit, packets_per_carton=self.product.packets_per_carton)
 
     def save(self, *args, **kwargs):
-        if self.order_id and self.order.stock_movements.exists():
-            raise ValidationError("Dispatched order lines cannot be edited.")
+        if self.order_id and Order.objects.only("status").get(pk=self.order_id).status != Order.Status.DRAFT:
+            raise ValidationError("Reviewed order lines cannot be edited.")
         super().save(*args, **kwargs)
 
     def delete(self, *args, **kwargs):
-        if self.order.stock_movements.exists():
-            raise ValidationError("Dispatched order lines cannot be deleted.")
+        if Order.objects.only("status").get(pk=self.order_id).status != Order.Status.DRAFT:
+            raise ValidationError("Reviewed order lines cannot be deleted.")
         return super().delete(*args, **kwargs)
 
 
@@ -354,9 +382,36 @@ class Invoice(models.Model):
     order = models.ForeignKey(Order, on_delete=models.PROTECT, related_name="invoices")
     amount = models.DecimalField(max_digits=14, decimal_places=2)
     due_date = models.DateField(null=True, blank=True)
+    supplier_name = models.CharField(max_length=200, blank=True)
+    supplier_address = models.TextField(blank=True)
+    supplier_gstin = models.CharField(max_length=15, blank=True)
+    supplier_state = models.CharField(max_length=50, blank=True)
+    supplier_state_code = models.CharField(max_length=2, blank=True)
+    customer_name = models.CharField(max_length=200, blank=True)
+    customer_address = models.TextField(blank=True)
+    customer_gstin = models.CharField(max_length=15, blank=True)
+    customer_state = models.CharField(max_length=50, blank=True)
+    customer_state_code = models.CharField(max_length=2, blank=True)
+    place_of_supply_state = models.CharField(max_length=50, blank=True)
+    place_of_supply_code = models.CharField(max_length=2, blank=True)
+    taxable_value = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    cgst_amount = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    sgst_amount = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    igst_amount = models.DecimalField(max_digits=14, decimal_places=2, default=0)
 
     class Meta:
-        constraints = [models.CheckConstraint(condition=models.Q(amount__gte=0), name="nonnegative_invoice_amount")]
+        constraints = [
+            models.CheckConstraint(condition=models.Q(amount__gte=0), name="nonnegative_invoice_amount"),
+            models.UniqueConstraint(fields=["order"], name="one_invoice_per_order"),
+        ]
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValidationError("Issued invoices are immutable; use a separate correction document.")
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("Issued invoices cannot be deleted.")
 
     @property
     def balance_due(self):
@@ -377,8 +432,60 @@ class Payment(models.Model):
     class Meta:
         constraints = [models.CheckConstraint(condition=models.Q(amount__gt=0), name="positive_payment_amount")]
 
+    def clean(self):
+        if self.invoice_id:
+            if self.date is not None and self.date < self.invoice.date:
+                raise ValidationError({"date": "Payment date cannot precede the invoice date."})
+            if self.amount is not None and self.amount > self.invoice.balance_due:
+                raise ValidationError({"amount": "Payment exceeds the invoice outstanding balance."})
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValidationError("Recorded payments are immutable; enter a correcting payment separately.")
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("Recorded payments cannot be deleted.")
+
     def __str__(self):
         return self.reference
+
+
+class InvoiceLine(models.Model):
+    invoice = models.ForeignKey(Invoice, on_delete=models.PROTECT, related_name="lines")
+    line_number = models.PositiveIntegerField()
+    description = models.CharField(max_length=200)
+    hsn_code = models.CharField(max_length=20)
+    quantity = models.DecimalField(max_digits=18, decimal_places=6)
+    unit = models.CharField(max_length=6, choices=Unit.choices)
+    unit_price = models.DecimalField(max_digits=12, decimal_places=2)
+    taxable_value = models.DecimalField(max_digits=14, decimal_places=2)
+    gst_rate = models.DecimalField(max_digits=5, decimal_places=2)
+    cgst_amount = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    sgst_amount = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    igst_amount = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["invoice", "line_number"], name="unique_invoice_line")]
+        ordering = ["line_number"]
+
+    @property
+    def total(self):
+        return self.taxable_value + self.cgst_amount + self.sgst_amount + self.igst_amount
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValidationError("Issued invoice lines are immutable.")
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("Issued invoice lines cannot be deleted.")
+
+
+class InvoiceSequence(models.Model):
+    financial_year = models.CharField(max_length=7, unique=True)
+    next_number = models.PositiveIntegerField(default=1)
 
 
 class StockAdjustment(models.Model):

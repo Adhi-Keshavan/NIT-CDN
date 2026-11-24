@@ -5,6 +5,7 @@ from decimal import Decimal
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
+from django.utils import timezone
 
 from .costing import material_issue_cost
 from .models import BOMLine, Item, Order, ProductionCostRevision, ProductionRun, Purchase, StockAdjustment, StockMovement
@@ -197,7 +198,7 @@ def stock_shortages_for_order(order):
 
 
 @transaction.atomic
-def approve_order(order):
+def approve_order(order, *, reviewed_by=None):
     order = Order.objects.select_for_update().get(pk=order.pk)
     if order.status != Order.Status.DRAFT:
         raise ValidationError("Only draft orders can be approved.")
@@ -209,7 +210,25 @@ def approve_order(order):
     if shortages:
         raise ValidationError(f"Insufficient finished stock: {shortages}")
     order.status = Order.Status.CONFIRMED
-    order.save(update_fields=["status"])
+    order.reviewed_by = reviewed_by
+    order.reviewed_at = timezone.now()
+    order.rejection_reason = ""
+    order.save(update_fields=["status", "reviewed_by", "reviewed_at", "rejection_reason"])
+    return order
+
+
+@transaction.atomic
+def reject_order(order, *, reason, reviewed_by):
+    order = Order.objects.select_for_update().get(pk=order.pk)
+    if order.status != Order.Status.DRAFT:
+        raise ValidationError("Only draft orders can be rejected.")
+    if not reason.strip():
+        raise ValidationError("A rejection reason is required.")
+    order.status = Order.Status.REJECTED
+    order.rejection_reason = reason.strip()
+    order.reviewed_by = reviewed_by
+    order.reviewed_at = timezone.now()
+    order.save(update_fields=["status", "rejection_reason", "reviewed_by", "reviewed_at"])
     return order
 
 
@@ -219,6 +238,8 @@ def dispatch_order(order):
     order = Order.objects.select_for_update().get(pk=order.pk)
     if order.status not in {Order.Status.CONFIRMED, Order.Status.SHIPPED}:
         raise ValidationError("Order must be approved before dispatch.")
+    if not order.invoices.exists():
+        raise ValidationError("Issue an invoice before dispatch.")
     lines = list(order.lines.select_related("product__item").order_by("line_number"))
     if not lines:
         raise ValidationError("Order needs at least one line.")

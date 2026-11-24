@@ -13,9 +13,10 @@ from django.test import TestCase
 from django.urls import reverse
 
 from .costing import weighted_average_material_cost
+from .billing import financial_year, issue_invoice
 from .ledger import approve_order, complete_production_run, dispatch_order, post_adjustment, receive_purchase, stock_shortages_for_order, update_run_overheads
 from .models import (
-    BOMLine, Customer, Item, Material, Order, OrderLine, Product,
+    BOMLine, CompanyProfile, Customer, Invoice, Item, Material, Order, OrderLine, Product,
     ProductionConsumption, ProductionCostRevision, ProductionRun, Purchase, StockAdjustment, StockAdjustmentLine, StockMovement,
 )
 from .units import Unit, convert_quantity
@@ -276,6 +277,16 @@ class PostingTests(TestCase):
             quantity=Decimal("150"), unit=Unit.PACKET, unit_price=Decimal("50"),
         )
         approve_order(retailer_order)
+        company = CompanyProfile.objects.create(
+            pk=1, name="Test Foods", address="Chennai", state="Tamil Nadu",
+            state_code="33", gstin="33ABCDE1234F1Z5",
+        )
+        product.hsn_code = "210690"
+        product.save(update_fields=["hsn_code"])
+        issue_invoice(
+            retailer_order, company=company, issue_date=date(2026, 11, 3),
+            place_of_supply_state="Tamil Nadu", place_of_supply_code="33",
+        )
         dispatch_order(retailer_order)
         dispatch_order(retailer_order)
         self.assertEqual(retailer_order.stock_movements.count(), 1)

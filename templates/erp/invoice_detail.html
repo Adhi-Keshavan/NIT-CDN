@@ -1,0 +1,14 @@
+{% extends "erp/business_base.html" %}
+{% load erp_format %}
+{% block title %}Invoice {{ invoice.number }}{% endblock %}
+{% block content %}
+<h1>Invoice {{ invoice.number }}</h1><p>{{ invoice.date }} · {{ invoice.customer_name }} · order <a href="{% url 'sales_order_detail' invoice.order.pk %}">{{ invoice.order.reference }}</a></p>
+<div class="actions"><a class="button" href="{% url 'invoice_pdf' invoice.pk %}" target="_blank" rel="noopener">Open PDF to download or share</a>{% if user.role == 'admin' %}<a class="button secondary" href="{% url 'order_review' invoice.order.pk %}">Order review</a>{% endif %}</div>
+<div class="grid"><div class="card"><h2>Supplier</h2><p>{{ invoice.supplier_name }}<br>{{ invoice.supplier_address|linebreaksbr }}<br>GSTIN {{ invoice.supplier_gstin }}<br>{{ invoice.supplier_state }} ({{ invoice.supplier_state_code }})</p></div>
+<div class="card"><h2>Customer</h2><p>{{ invoice.customer_name }}<br>{{ invoice.customer_address|linebreaksbr }}<br>GSTIN {{ invoice.customer_gstin|default:'Unregistered' }}<br>{{ invoice.customer_state }} ({{ invoice.customer_state_code }})</p><p>Place of supply: {{ invoice.place_of_supply_state }} ({{ invoice.place_of_supply_code }})</p></div></div>
+<div class="card table-wrap"><table><thead><tr><th>Product</th><th>HSN</th><th>Quantity</th><th>Rate</th><th>Taxable</th><th>GST rate</th><th>Total</th></tr></thead><tbody>
+{% for line in lines %}<tr><td>{{ line.description }}</td><td>{{ line.hsn_code }}</td><td>{{ line.quantity|quantity }} {{ line.unit|unit_label }}</td><td>₹{{ line.unit_price }}</td><td>₹{{ line.taxable_value }}</td><td>{{ line.gst_rate }}%</td><td>₹{{ line.total }}</td></tr>{% endfor %}
+</tbody></table></div>
+<div class="card"><p>Taxable ₹{{ invoice.taxable_value }} · CGST ₹{{ invoice.cgst_amount }} · SGST ₹{{ invoice.sgst_amount }} · IGST ₹{{ invoice.igst_amount }}</p><h2>Invoice total ₹{{ invoice.amount }}</h2><h2>Outstanding ₹{{ invoice.balance_due }}</h2></div>
+<div class="card"><h2>Payments</h2><ul>{% for payment in payments %}<li>{{ payment.reference }} · {{ payment.date }} · ₹{{ payment.amount }} · {{ payment.method }}</li>{% empty %}<li>No payments recorded.</li>{% endfor %}</ul>{% if user.role == 'admin' and invoice.balance_due > 0 %}<a class="button" href="{% url 'payment_new' invoice.pk %}">Record payment</a>{% endif %}</div>
+{% endblock %}

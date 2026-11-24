@@ -1,9 +1,10 @@
 from decimal import Decimal
 
 from django import forms
+from django.forms import formset_factory
 from django.utils import timezone
 
-from .models import Product, Purchase
+from .models import CompanyProfile, Customer, Product, Purchase
 
 
 class PurchaseReceiptForm(forms.ModelForm):
@@ -60,3 +61,40 @@ class RunEntryForm(forms.Form):
 class OverheadForm(forms.Form):
     labour_cost = forms.DecimalField(max_digits=14, decimal_places=2, min_value=Decimal("0"), label="Labour (₹)")
     power_cost = forms.DecimalField(max_digits=14, decimal_places=2, min_value=Decimal("0"), label="Gas and power (₹)")
+
+
+class ProductChoiceField(forms.ModelChoiceField):
+    def label_from_instance(self, product):
+        return f"{product.item.name} - ₹{product.selling_price} per {product.item.base_unit}"
+
+
+class SalesOrderForm(forms.Form):
+    customer = forms.ModelChoiceField(queryset=Customer.objects.order_by("name"))
+
+
+class OrderLineEntryForm(forms.Form):
+    product = ProductChoiceField(queryset=Product.objects.filter(item__is_active=True).select_related("item").order_by("item__name"))
+    quantity = forms.DecimalField(max_digits=18, decimal_places=6, min_value=Decimal("0.000001"))
+
+
+OrderLineEntryFormSet = formset_factory(OrderLineEntryForm, extra=3, min_num=1, validate_min=True, can_delete=True)
+
+
+class CompanyProfileForm(forms.ModelForm):
+    class Meta:
+        model = CompanyProfile
+        fields = ("name", "address", "state", "state_code", "gstin")
+
+
+class InvoiceIssueForm(forms.Form):
+    issue_date = forms.DateField(initial=timezone.localdate, widget=forms.DateInput(attrs={"type": "date"}))
+    due_date = forms.DateField(required=False, widget=forms.DateInput(attrs={"type": "date"}))
+    place_of_supply_state = forms.CharField(max_length=50)
+    place_of_supply_code = forms.RegexField(regex=r"^[0-9]{2}$", max_length=2, label="Place of supply state code")
+
+
+class PaymentEntryForm(forms.Form):
+    reference = forms.CharField(max_length=60)
+    date = forms.DateField(initial=timezone.localdate, widget=forms.DateInput(attrs={"type": "date"}))
+    amount = forms.DecimalField(max_digits=14, decimal_places=2, min_value=Decimal("0.01"))
+    method = forms.CharField(max_length=60, required=False)
