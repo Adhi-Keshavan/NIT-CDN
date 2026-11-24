@@ -6,7 +6,8 @@ from decimal import Decimal
 from django.core.exceptions import ValidationError
 from django.db import transaction
 
-from .models import BOMLine, Item, Order, ProductionRun, Purchase, StockAdjustment, StockMovement
+from .costing import material_issue_cost
+from .models import BOMLine, Item, Order, ProductionCostRevision, ProductionRun, Purchase, StockAdjustment, StockMovement
 from .units import convert_quantity
 
 
@@ -39,6 +40,11 @@ def _lock_items(item_ids):
     list(Item.objects.select_for_update().filter(pk__in=item_ids).order_by("pk"))
 
 
+def _reject_backdated(item_ids, document_date):
+    if StockMovement.objects.filter(item_id__in=item_ids, date__gt=document_date).exists():
+        raise ValidationError("Post documents in date order to preserve weighted average costing.")
+
+
 @transaction.atomic
 def post_adjustment(adjustment):
     """Post an opening or correcting adjustment from its saved lines."""
@@ -52,6 +58,8 @@ def post_adjustment(adjustment):
     posted_count = adjustment.stock_movements.count()
     if posted_count and posted_count != len(lines):
         raise ValidationError("Adjustment has an incomplete stock posting.")
+    if not posted_count:
+        _reject_backdated([line.item_id for line in lines], adjustment.date)
     if not posted_count and adjustment.kind == StockAdjustment.Kind.ADJUSTMENT:
         issues = defaultdict(Decimal)
         for line in lines:
@@ -81,6 +89,8 @@ def receive_purchase(purchase):
     if purchase.status not in {Purchase.Status.DRAFT, Purchase.Status.RECEIVED}:
         raise ValidationError("Purchase has an unsupported status.")
     _lock_items([purchase.material.item_id])
+    if not purchase.stock_movements.exists():
+        _reject_backdated([purchase.material.item_id], purchase.date)
     if purchase.status == Purchase.Status.DRAFT:
         purchase.status = Purchase.Status.RECEIVED
         purchase.save(update_fields=["status"])
@@ -99,7 +109,8 @@ def complete_production_run(run):
     if run.completed_quantity <= 0:
         raise ValidationError("Completed quantity must be positive before posting.")
     consumptions = list(run.consumptions.select_related("material__item").order_by("material__item_id"))
-    standard_ids = set(BOMLine.objects.filter(product=run.product).values_list("material_id", flat=True))
+    standards = {line.material_id: line for line in BOMLine.objects.filter(product=run.product)}
+    standard_ids = set(standards)
     actual_ids = {entry.material_id for entry in consumptions}
     if not standard_ids or actual_ids != standard_ids:
         raise ValidationError("Actual consumption must include every BOM material exactly once.")
@@ -111,11 +122,22 @@ def complete_production_run(run):
     if posted_count and posted_count != len(consumptions) + 1:
         raise ValidationError("Production run has an incomplete stock posting.")
     if not posted_count:
+        _reject_backdated(item_ids, run.date)
+        batches = _base_quantity(run.product.item, run.planned_quantity, run.unit) / Decimal(run.product.expected_yield_per_batch)
         for entry in consumptions:
             needed = _base_quantity(entry.material.item, entry.quantity, entry.unit)
             available = StockMovement.objects.balance_for(entry.material.item)
             if available < needed:
                 raise ValidationError(f"Insufficient {entry.material.item.sku}: short {needed - available} {entry.material.item.base_unit}.")
+        for entry in consumptions:
+            needed = _base_quantity(entry.material.item, entry.quantity, entry.unit)
+            rate, extended = material_issue_cost(entry.material, needed, as_of=run.date)
+            standard = standards[entry.material_id]
+            entry.standard_quantity_snapshot = standard.quantity * batches
+            entry.standard_unit_snapshot = standard.unit
+            entry.unit_cost_snapshot = rate
+            entry.extended_cost = extended
+            entry.save(update_fields=["standard_quantity_snapshot", "standard_unit_snapshot", "unit_cost_snapshot", "extended_cost"])
     if run.status == ProductionRun.Status.PLANNED:
         run.status = ProductionRun.Status.COMPLETED
         run.save(update_fields=["status"])
@@ -130,6 +152,31 @@ def complete_production_run(run):
         source_field="production_run", item=run.product.item,
         quantity=run.completed_quantity, unit=run.unit,
     )
+
+
+@transaction.atomic
+def update_run_overheads(run, *, labour_cost, power_cost, changed_by):
+    """Update post-run overheads and keep a user/time stamped revision."""
+    run = ProductionRun.objects.select_for_update().get(pk=run.pk)
+    if run.status != ProductionRun.Status.COMPLETED:
+        raise ValidationError("Only completed runs can receive final overheads.")
+    labour_cost = Decimal(str(labour_cost))
+    power_cost = Decimal(str(power_cost))
+    if labour_cost < 0 or power_cost < 0:
+        raise ValidationError("Overhead costs cannot be negative.")
+    if (run.labour_cost, run.power_cost) == (labour_cost, power_cost):
+        return run
+    old_labour, old_power = run.labour_cost, run.power_cost
+    run.labour_cost = labour_cost
+    run.power_cost = power_cost
+    run.full_clean()
+    run.save(update_fields=["labour_cost", "power_cost"])
+    ProductionCostRevision.objects.create(
+        run=run, changed_by=changed_by,
+        old_labour_cost=old_labour, new_labour_cost=labour_cost,
+        old_power_cost=old_power, new_power_cost=power_cost,
+    )
+    return run
 
 
 def stock_shortages_for_order(order):

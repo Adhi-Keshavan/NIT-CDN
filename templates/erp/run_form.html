@@ -1,0 +1,40 @@
+{% extends "erp/base.html" %}
+{% load erp_format %}
+{% block title %}Start production run{% endblock %}
+{% block content %}
+<h1>Start production run</h1>
+<div class="card"><h2>1. Choose product and batch count</h2><form method="get">{{ plan_form.as_p }}<button type="submit">Show standard BOM</button></form></div>
+{% if entry_form %}
+<div class="card"><h2>2. Review standard and enter actual</h2>
+<p><strong>{{ product.item.name }}</strong> · {{ batches }} batch{{ batches|pluralize }} · expected output <strong>{{ expected_output }} {{ product.item.base_unit }}</strong></p>
+<form method="post">{% csrf_token %}<input type="hidden" name="product" value="{{ product.pk }}"><input type="hidden" name="batches" value="{{ batches }}">
+{{ entry_form.non_field_errors }}
+<div class="grid"><div>{{ entry_form.reference.label_tag }}{{ entry_form.reference }}{{ entry_form.reference.errors }}</div><div>{{ entry_form.date.label_tag }}{{ entry_form.date }}{{ entry_form.date.errors }}</div><div>{{ entry_form.good_output.label_tag }}{{ entry_form.good_output }}{{ entry_form.good_output.errors }}</div></div>
+<div class="table-wrap"><table><thead><tr><th>Material</th><th>Standard for {{ batches }} batch{{ batches|pluralize }}</th><th>Actual issued</th><th>Damaged / wasted</th><th>Issue variance</th></tr></thead><tbody>
+{% for row in preview %}<tr data-standard="{{ row.expected }}" data-actual-id="{{ row.actual_field.id_for_label }}"><td>{{ row.material.item.name }}</td><td>{{ row.expected|quantity }} {{ row.unit|unit_label }}</td><td>{{ row.actual_field.label_tag }}{{ row.actual_field }}{{ row.actual_field.errors }}</td><td>{{ row.wastage_field.label_tag }}{{ row.wastage_field }}{{ row.wastage_field.errors }}</td><td class="variance-preview"></td></tr>{% endfor %}
+</tbody></table></div>
+<p id="yield-preview" data-standard="{{ expected_output }}"></p>
+<p class="muted">Actual issue includes damaged material. For the benchmark, enter 194 pouches issued and 6 damaged.</p>
+<button type="submit">Post run and stock</button>
+</form></div>
+<script>
+  function showVariance(target, actual, standard, prefix) {
+    if (!Number.isFinite(actual) || standard <= 0) { target.textContent = ""; return; }
+    const variance = (actual - standard) * 100 / standard;
+    target.textContent = `${prefix}${variance >= 0 ? "+" : ""}${variance.toFixed(2)}%${Math.abs(variance) > 3 ? " · Alert" : ""}`;
+    target.classList.toggle("alert", Math.abs(variance) > 3);
+  }
+  function refreshPreview() {
+    document.querySelectorAll("tr[data-standard]").forEach(row => {
+      const input = document.getElementById(row.dataset.actualId);
+      showVariance(row.querySelector(".variance-preview"), input.value === "" ? NaN : Number(input.value), Number(row.dataset.standard), "");
+    });
+    const yieldPreview = document.getElementById("yield-preview");
+    const output = document.getElementById("id_good_output").value;
+    showVariance(yieldPreview, output === "" ? NaN : Number(output), Number(yieldPreview.dataset.standard), "Expected versus good output: ");
+  }
+  document.querySelector("form[method=post]").addEventListener("input", refreshPreview);
+  refreshPreview();
+</script>
+{% endif %}
+{% endblock %}

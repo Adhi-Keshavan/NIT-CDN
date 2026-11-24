@@ -1,0 +1,15 @@
+{% extends "erp/base.html" %}
+{% block title %}Supervisor dashboard{% endblock %}
+{% block content %}
+<h1>Supervisor dashboard</h1>
+<p class="muted">Record receipts and production at their source. Stock updates when a document is posted.</p>
+<div class="grid">
+  <div class="card"><h2>Purchase receipt</h2><p>Add material stock at the received rate.</p><a class="button" href="{% url 'purchase_new' %}">Receive purchase</a></div>
+  <div class="card"><h2>Production run</h2><p>Review the BOM, enter actual issues, and post good output.</p><a class="button" href="{% url 'run_new' %}">Start run</a></div>
+  <div class="card"><h2>Stock summary</h2><p>Balances come from signed ledger movements.</p><a class="button" href="{% url 'stock_summary' %}">View stock</a></div>
+</div>
+<div class="grid">
+  <div class="card"><h2>Recent purchases</h2><ul>{% for purchase in recent_purchases %}<li><a href="{% url 'purchase_detail' purchase.pk %}">{{ purchase.reference }}</a> · {{ purchase.material.item.name }} · {{ purchase.get_status_display }}</li>{% empty %}<li>No purchases yet.</li>{% endfor %}</ul></div>
+  <div class="card"><h2>Recent runs</h2><ul>{% for run in recent_runs %}<li><a href="{% url 'run_detail' run.pk %}">{{ run.reference }}</a> · {{ run.product.item.name }} · {{ run.get_status_display }}</li>{% empty %}<li>No runs yet.</li>{% endfor %}</ul></div>
+</div>
+{% endblock %}

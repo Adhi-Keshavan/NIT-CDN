@@ -6,7 +6,7 @@ from .ledger import approve_order, complete_production_run, dispatch_order, post
 
 from .models import (
     BOMLine, Customer, Invoice, Item, Material, Order, OrderLine,
-    Payment, Product, ProductionConsumption, ProductionRun, Purchase,
+    Payment, Product, ProductionConsumption, ProductionCostRevision, ProductionRun, Purchase,
     StockAdjustment, StockAdjustmentLine, StockMovement,
 )
 
@@ -93,7 +93,7 @@ class PurchaseAdmin(PostedReadOnlyMixin, admin.ModelAdmin):
 
 @admin.register(ProductionRun)
 class ProductionRunAdmin(PostedReadOnlyMixin, admin.ModelAdmin):
-    list_display = ("reference", "product", "planned_quantity", "completed_quantity", "date", "status")
+    list_display = ("reference", "product", "planned_quantity", "completed_quantity", "date", "status", "material_cost", "cost_per_packet", "yield_variance_alert")
     readonly_fields = ("status",)
     inlines = [ProductionConsumptionInline]
     actions = ("complete_selected",)
@@ -128,6 +128,20 @@ class StockMovementAdmin(admin.ModelAdmin):
         if obj:
             return tuple(field.name for field in self.model._meta.fields)
         return self.readonly_fields
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(ProductionCostRevision)
+class ProductionCostRevisionAdmin(admin.ModelAdmin):
+    list_display = ("run", "changed_by", "changed_at", "old_labour_cost", "new_labour_cost", "old_power_cost", "new_power_cost")
+
+    def get_readonly_fields(self, request, obj=None):
+        return tuple(field.name for field in self.model._meta.fields)
+
+    def has_add_permission(self, request):
+        return False
 
     def has_delete_permission(self, request, obj=None):
         return False

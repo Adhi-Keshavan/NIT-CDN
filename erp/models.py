@@ -1,4 +1,4 @@
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
@@ -97,8 +97,12 @@ class Material(models.Model):
             raise ValidationError({"item": "The item must have material kind."})
 
     def save(self, *args, **kwargs):
-        if self.pk and type(self).objects.get(pk=self.pk).item_id != self.item_id:
-            raise ValidationError("A material's stock item cannot be reassigned.")
+        if self.pk:
+            original = type(self).objects.get(pk=self.pk)
+            if original.item_id != self.item_id:
+                raise ValidationError("A material's stock item cannot be reassigned.")
+            if self.item.movements.exists() and original.standard_cost != self.standard_cost:
+                raise ValidationError("Opening material cost cannot change after stock is posted.")
         super().save(*args, **kwargs)
 
     def __str__(self):
@@ -166,11 +170,17 @@ class ProductionRun(models.Model):
     completed_quantity = models.DecimalField(max_digits=18, decimal_places=6, default=0)
     unit = models.CharField(max_length=6, choices=Unit.choices)
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.PLANNED)
+    labour_cost = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    power_cost = models.DecimalField(max_digits=14, decimal_places=2, default=0, help_text="Gas and power overhead")
+
+    VARIANCE_ALERT_PERCENT = Decimal("3")
 
     class Meta:
         constraints = [
             models.CheckConstraint(condition=models.Q(planned_quantity__gt=0), name="positive_planned_quantity"),
             models.CheckConstraint(condition=models.Q(completed_quantity__gte=0), name="nonnegative_completed_quantity"),
+            models.CheckConstraint(condition=models.Q(labour_cost__gte=0), name="nonnegative_run_labour_cost"),
+            models.CheckConstraint(condition=models.Q(power_cost__gte=0), name="nonnegative_run_power_cost"),
         ]
 
     def clean(self):
@@ -186,6 +196,37 @@ class ProductionRun(models.Model):
         planned = convert_quantity(self.planned_quantity, self.unit, self.product.item.base_unit, packets_per_carton=self.product.packets_per_carton)
         actual = convert_quantity(self.completed_quantity, self.unit, self.product.item.base_unit, packets_per_carton=self.product.packets_per_carton)
         return (actual - planned) * Decimal("100") / planned
+
+    @property
+    def yield_variance_alert(self):
+        return abs(self.yield_variance_percent) > self.VARIANCE_ALERT_PERCENT
+
+    @property
+    def material_cost(self):
+        return self.consumptions.aggregate(total=Coalesce(
+            Sum("extended_cost"), Value(Decimal("0")),
+            output_field=DecimalField(max_digits=18, decimal_places=2),
+        ))["total"]
+
+    @property
+    def total_cost(self):
+        return self.material_cost + self.labour_cost + self.power_cost
+
+    @property
+    def cost_per_packet(self):
+        good_output = convert_quantity(
+            self.completed_quantity, self.unit, self.product.item.base_unit,
+            packets_per_carton=self.product.packets_per_carton,
+        )
+        if good_output <= 0:
+            return None
+        return (self.total_cost / good_output).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+    @property
+    def margin_per_packet(self):
+        if self.cost_per_packet is None:
+            return None
+        return self.product.selling_price - self.cost_per_packet
 
     def __str__(self):
         return self.reference
@@ -247,6 +288,10 @@ class ProductionConsumption(models.Model):
     quantity = models.DecimalField(max_digits=18, decimal_places=6, help_text="Actual issued quantity, including wastage")
     unit = models.CharField(max_length=6, choices=Unit.choices)
     wastage_quantity = models.DecimalField(max_digits=18, decimal_places=6, default=0)
+    standard_quantity_snapshot = models.DecimalField(max_digits=18, decimal_places=6, null=True, blank=True, editable=False)
+    standard_unit_snapshot = models.CharField(max_length=6, choices=Unit.choices, blank=True, default="", editable=False)
+    unit_cost_snapshot = models.DecimalField(max_digits=18, decimal_places=6, default=0, editable=False)
+    extended_cost = models.DecimalField(max_digits=18, decimal_places=2, default=0, editable=False)
 
     class Meta:
         constraints = [
@@ -273,14 +318,34 @@ class ProductionConsumption(models.Model):
 
     @property
     def variance_percent(self):
-        bom_line = BOMLine.objects.get(product=self.run.product, material=self.material)
-        batches = convert_quantity(
-            self.run.planned_quantity, self.run.unit, self.run.product.item.base_unit,
-            packets_per_carton=self.run.product.packets_per_carton,
-        ) / Decimal(self.run.product.expected_yield_per_batch)
-        standard = convert_quantity(bom_line.quantity, bom_line.unit, self.material.item.base_unit) * batches
+        if self.standard_quantity_snapshot is not None:
+            standard = convert_quantity(self.standard_quantity_snapshot, self.standard_unit_snapshot, self.material.item.base_unit)
+        else:
+            bom_line = BOMLine.objects.get(product=self.run.product, material=self.material)
+            batches = convert_quantity(
+                self.run.planned_quantity, self.run.unit, self.run.product.item.base_unit,
+                packets_per_carton=self.run.product.packets_per_carton,
+            ) / Decimal(self.run.product.expected_yield_per_batch)
+            standard = convert_quantity(bom_line.quantity, bom_line.unit, self.material.item.base_unit) * batches
         actual = convert_quantity(self.quantity, self.unit, self.material.item.base_unit)
         return (actual - standard) * Decimal("100") / standard
+
+    @property
+    def variance_alert(self):
+        return abs(self.variance_percent) > ProductionRun.VARIANCE_ALERT_PERCENT
+
+
+class ProductionCostRevision(models.Model):
+    run = models.ForeignKey(ProductionRun, on_delete=models.PROTECT, related_name="cost_revisions")
+    changed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    changed_at = models.DateTimeField(auto_now_add=True)
+    old_labour_cost = models.DecimalField(max_digits=14, decimal_places=2)
+    new_labour_cost = models.DecimalField(max_digits=14, decimal_places=2)
+    old_power_cost = models.DecimalField(max_digits=14, decimal_places=2)
+    new_power_cost = models.DecimalField(max_digits=14, decimal_places=2)
+
+    class Meta:
+        ordering = ["-changed_at"]
 
 
 class Invoice(models.Model):
