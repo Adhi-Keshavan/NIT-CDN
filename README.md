@@ -1,8 +1,8 @@
 # NIT-CDN
 
-Days 1–3 Django backend for customers, products, materials, bills of materials, purchasing, production, sales orders, invoicing, payments, and a signed stock ledger. Day 3 adds mobile sales entry, order review, GST invoice PDFs, dispatch, and payment collection.
+Days 1–4 Django order-to-audit system for customers, products, materials, bills of materials, purchasing, production, sales orders, GST invoicing, payments, stock ledger, reports, credit notes, and audit events.
 
-Django keeps the business rules and role checks in one backend, while PostgreSQL gives the ledger transactional writes and exact decimal arithmetic. Server-rendered pages are a small starting point; the order screen can be made mobile-friendly without changing the data model.
+Django keeps business rules and role checks in one backend, while PostgreSQL gives the ledger transactional writes and exact decimal arithmetic. The responsive UI has role-specific navigation, interactive order lines and production variance previews.
 
 ## Local setup
 
@@ -23,6 +23,26 @@ Edit `.env`: set a unique `SECRET_KEY`, and set `DATABASE_URL=sqlite:///db.sqlit
 ```
 
 Open <http://127.0.0.1:8000/login/>. A `createsuperuser` account receives the `admin` business role and can use `/admin/` and `/management/`. The role routes are `/sales/`, `/production/`, and `/management/`.
+
+For a **one-command local demo** after installing requirements, run this instead of the three management commands above. It uses `db.local.sqlite3` even if `.env` points to Supabase, applies migrations, upserts the benchmark, checks the app, and starts the server:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\run_local.ps1
+```
+
+To verify startup on a fresh, separate database without keeping a server open, run `powershell -ExecutionPolicy Bypass -File .\scripts\run_local.ps1 -Database db.day4-check.sqlite3 -NoServer`. The script deliberately never writes to Supabase. Use normal `manage.py migrate` and `manage.py seed_benchmark` with your Supabase `DATABASE_URL` for that database.
+
+## Login, signup, and roles
+
+The login page links to `/signup/`. New users enter their name, email, password, and requested role (Salesman, Production, or Admin). Signup creates an **inactive** account, so choosing Admin does not grant access. An existing admin opens `/management/access/` to approve or reject each request. Approval activates the account and grants the requested role; rejection leaves it inactive. The first admin can come from `createsuperuser` or the benchmark seed. Email addresses are collected for account identity, but this prototype does not send approval emails.
+
+| Role | After login | Access |
+| --- | --- | --- |
+| Salesman | Sales orders | Create orders and view only their own orders and invoices. |
+| Production | Production | Receive purchases, post runs, and view stock. |
+| Admin | Overview | Sales, production, management, account approvals, and ERP master data in Django admin. |
+
+The server enforces these permissions on every route. Business admins can edit ERP products and customers in Django admin, including HSN and GSTIN setup, while account requests are reviewed from the People page. Signup and approval pages are responsive for phone-sized screens.
 
 On macOS/Linux, use `python3 -m venv .venv`, `.venv/bin/python -m pip install -r requirements.txt`, `cp .env.example .env`, and `.venv/bin/python manage.py ...`.
 
@@ -87,7 +107,13 @@ The financial year runs from April 1 through March 31. Tax is calculated from ea
 
 ## Current scope
 
-The app now covers the benchmark purchase, production, order, invoice, dispatch, and payment flow. Exports, returns and credit notes, digital invoice signing, e-invoicing integration, and broader audit logging remain future work.
+The app covers the benchmark purchase, production, order, invoice, dispatch, and payment flow, plus admin reports and full invoice credit notes. The [two-page design note](docs/DESIGN_NOTE.md) summarizes the schema and rules.
+
+## Day 4 reports and audit
+
+Admins open `/reports/` for the sales register, GST summary, purchase register, stock summary, stock ledger, production variance/cost, and collections/outstanding with ageing. Each report accepts inclusive **From** and **Through** dates and offers CSV and PDF containing the same rows. Stock summary shows opening balance before From, receipts/issues within the range, and closing balance through Through. The ledger shows running base-unit balances. Collections show invoices and payments during the range; outstanding and ageing include all invoices through the end date, using due date or invoice date when no due date exists. GST and sales registers include full credit notes as negative documents on the credit-note date. The reports use posted invoice snapshots, never current product prices.
+
+Issuing an invoice, posting a production run, changing run overheads, recording payment, and issuing a credit note create timestamped audit events; actions from the UI record the acting user. Posted invoice and line values cannot be edited or deleted through model methods, bulk ORM changes, or Django admin. To cancel an **unpaid** invoice, admin opens its detail page and issues a dated, reasoned **full credit note** with a PDF download. The original invoice stays visible, its balance becomes zero, and later payment or dispatch is blocked. Dispatched stock is **not** automatically returned; a physical return needs a separate stock document. Paid invoices require refund/reconciliation before a full credit note, which this prototype does not implement. Partial credit notes, return authorizations, digital signing, e-invoicing, and GST return filing remain outside this demo. Audit events begin when this migration is applied; earlier documents have no reconstructed actor stamps. The [CBIC credit-note guidance](https://cbic-gst.gov.in/sectoral-faq.html) describes the underlying tax concept; review actual filing and timing requirements before real use.
 
 ## Checks
 
@@ -100,3 +126,5 @@ Remove-Item Env:DATABASE_URL
 ```
 
 The test command above temporarily selects local SQLite so Django does not create a test database in Supabase. The suite includes the Day 2 benchmark and the complete Day 3 flow through the sales and admin pages, PDF response, interstate IGST, paise rounding, role restrictions, duplicate dispatch, shortages, and payment limits. Tests do not post benchmark transactions to Supabase.
+
+Day 4 tests also replay the 238 → 88 packet benchmark, verify ₹7,875 invoice/₹3,875 outstanding and ₹31.14 production cost, exercise every report's HTML/CSV/PDF output and date filter, and check credit-note, audit, and immutability rules. No test transactions are posted to Supabase.

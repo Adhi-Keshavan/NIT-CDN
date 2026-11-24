@@ -98,3 +98,8 @@ class PaymentEntryForm(forms.Form):
     date = forms.DateField(initial=timezone.localdate, widget=forms.DateInput(attrs={"type": "date"}))
     amount = forms.DecimalField(max_digits=14, decimal_places=2, min_value=Decimal("0.01"))
     method = forms.CharField(max_length=60, required=False)
+
+
+class CreditNoteForm(forms.Form):
+    date = forms.DateField(initial=timezone.localdate, widget=forms.DateInput(attrs={"type": "date"}))
+    reason = forms.CharField(widget=forms.Textarea(attrs={"rows": 3}), max_length=1000)

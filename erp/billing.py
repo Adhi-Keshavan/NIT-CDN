@@ -5,7 +5,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from django.core.exceptions import ValidationError
 from django.db import transaction
 
-from .models import CompanyProfile, Invoice, InvoiceLine, InvoiceSequence, Order, Payment
+from .models import AuditEvent, CompanyProfile, CreditNote, CreditNoteSequence, Invoice, InvoiceLine, InvoiceSequence, Order, Payment
 
 
 PAISA = Decimal("0.01")
@@ -79,7 +79,7 @@ def invoice_calculation(order, *, company, place_of_supply_code):
 
 
 @transaction.atomic
-def issue_invoice(order, *, company, issue_date, place_of_supply_state, place_of_supply_code, due_date=None):
+def issue_invoice(order, *, company, issue_date, place_of_supply_state, place_of_supply_code, due_date=None, issued_by=None):
     order = Order.objects.select_for_update().select_related("customer").get(pk=order.pk)
     company = CompanyProfile.objects.get(pk=company.pk)
     if order.status != Order.Status.CONFIRMED:
@@ -118,13 +118,45 @@ def issue_invoice(order, *, company, issue_date, place_of_supply_state, place_of
     invoice.full_clean()
     invoice.save()
     for line in lines:
-        InvoiceLine.objects.create(invoice=invoice, **line)
+        snapshot = InvoiceLine(invoice=invoice, **line)
+        snapshot._allow_snapshot_create = True
+        snapshot.save()
+    AuditEvent.objects.create(invoice=invoice, actor=issued_by, action="invoice_issued", details={"number": number, "amount": str(invoice.amount)})
     return invoice
 
 
 @transaction.atomic
-def record_payment(invoice, *, reference, date, amount, method=""):
+def issue_credit_note(invoice, *, date, reason, issued_by=None):
     invoice = Invoice.objects.select_for_update().get(pk=invoice.pk)
+    if hasattr(invoice, "credit_note"):
+        raise ValidationError("This invoice already has a credit note.")
+    if invoice.payments.exists():
+        raise ValidationError("Recorded payments must be refunded or reconciled before a full credit note can be issued.")
+    if date < invoice.date:
+        raise ValidationError("Credit note date cannot precede the invoice date.")
+    reason = reason.strip()
+    if not reason:
+        raise ValidationError("A cancellation reason is required.")
+    year = financial_year(date)
+    sequence, _ = CreditNoteSequence.objects.select_for_update().get_or_create(financial_year=year)
+    number = f"CN/{year}/{sequence.next_number:04d}"
+    sequence.next_number += 1
+    sequence.save(update_fields=["next_number"])
+    note = CreditNote.objects.create(
+        invoice=invoice, number=number, date=date, reason=reason, issued_by=issued_by,
+        taxable_value=invoice.taxable_value, cgst_amount=invoice.cgst_amount,
+        sgst_amount=invoice.sgst_amount, igst_amount=invoice.igst_amount, amount=invoice.amount,
+    )
+    AuditEvent.objects.create(invoice=invoice, actor=issued_by, action="credit_note_issued", details={"number": number, "reason": reason, "amount": str(note.amount)})
+    return note
+
+
+@transaction.atomic
+def record_payment(invoice, *, reference, date, amount, method="", recorded_by=None):
+    invoice = Invoice.objects.select_for_update().get(pk=invoice.pk)
+    if hasattr(invoice, "credit_note"):
+        raise ValidationError("A credited invoice cannot receive payments.")
     payment = Payment(invoice=invoice, reference=reference, date=date, amount=amount, method=method)
     payment.save()
+    AuditEvent.objects.create(invoice=invoice, actor=recorded_by, action="payment_recorded", details={"reference": reference, "amount": str(amount)})
     return payment

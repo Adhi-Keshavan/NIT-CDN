@@ -206,6 +206,10 @@ class ProductionRun(models.Model):
 
     def save(self, *args, **kwargs):
         _protect_posted_document(self, ("reference", "date", "product_id", "planned_quantity", "completed_quantity", "unit", "status"))
+        if self.pk and not getattr(self, "_allow_overhead_change", False):
+            original = type(self).objects.get(pk=self.pk)
+            if original.status == self.Status.COMPLETED and (self.labour_cost, self.power_cost) != (original.labour_cost, original.power_cost):
+                raise ValidationError("Use the run overhead service so the change is audited.")
         super().save(*args, **kwargs)
 
     @property
@@ -376,6 +380,20 @@ class ProductionCostRevision(models.Model):
         ordering = ["-changed_at"]
 
 
+class ImmutableRecordQuerySet(models.QuerySet):
+    def bulk_create(self, objs, batch_size=None, ignore_conflicts=False, update_conflicts=False, update_fields=None, unique_fields=None):
+        raise ValidationError("Issued records must be created through their posting service.")
+
+    def update(self, **kwargs):
+        raise ValidationError("Issued records cannot be updated in bulk.")
+
+    def delete(self):
+        raise ValidationError("Issued records cannot be deleted in bulk.")
+
+    def bulk_update(self, objs, fields, batch_size=None):
+        raise ValidationError("Issued records cannot be updated in bulk.")
+
+
 class Invoice(models.Model):
     number = models.CharField(max_length=60, unique=True)
     date = models.DateField()
@@ -398,6 +416,7 @@ class Invoice(models.Model):
     cgst_amount = models.DecimalField(max_digits=14, decimal_places=2, default=0)
     sgst_amount = models.DecimalField(max_digits=14, decimal_places=2, default=0)
     igst_amount = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    objects = ImmutableRecordQuerySet.as_manager()
 
     class Meta:
         constraints = [
@@ -416,7 +435,8 @@ class Invoice(models.Model):
     @property
     def balance_due(self):
         paid = self.payments.aggregate(total=Coalesce(Sum("amount"), Value(Decimal("0")), output_field=DecimalField(max_digits=14, decimal_places=2)))["total"]
-        return self.amount - paid
+        credit = self.credit_note.amount if hasattr(self, "credit_note") else Decimal("0.00")
+        return self.amount - paid - credit
 
     def __str__(self):
         return self.number
@@ -428,6 +448,7 @@ class Payment(models.Model):
     date = models.DateField()
     amount = models.DecimalField(max_digits=14, decimal_places=2)
     method = models.CharField(max_length=60, blank=True)
+    objects = ImmutableRecordQuerySet.as_manager()
 
     class Meta:
         constraints = [models.CheckConstraint(condition=models.Q(amount__gt=0), name="positive_payment_amount")]
@@ -465,6 +486,7 @@ class InvoiceLine(models.Model):
     cgst_amount = models.DecimalField(max_digits=14, decimal_places=2, default=0)
     sgst_amount = models.DecimalField(max_digits=14, decimal_places=2, default=0)
     igst_amount = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    objects = ImmutableRecordQuerySet.as_manager()
 
     class Meta:
         constraints = [models.UniqueConstraint(fields=["invoice", "line_number"], name="unique_invoice_line")]
@@ -477,6 +499,8 @@ class InvoiceLine(models.Model):
     def save(self, *args, **kwargs):
         if self.pk:
             raise ValidationError("Issued invoice lines are immutable.")
+        if not getattr(self, "_allow_snapshot_create", False):
+            raise ValidationError("Invoice lines must be created when the invoice is issued.")
         super().save(*args, **kwargs)
 
     def delete(self, *args, **kwargs):
@@ -486,6 +510,66 @@ class InvoiceLine(models.Model):
 class InvoiceSequence(models.Model):
     financial_year = models.CharField(max_length=7, unique=True)
     next_number = models.PositiveIntegerField(default=1)
+
+
+class CreditNoteSequence(models.Model):
+    financial_year = models.CharField(max_length=7, unique=True)
+    next_number = models.PositiveIntegerField(default=1)
+
+
+class CreditNote(models.Model):
+    """Full invoice reversal; stock returns require a separate stock document."""
+
+    invoice = models.OneToOneField(Invoice, on_delete=models.PROTECT, related_name="credit_note")
+    number = models.CharField(max_length=60, unique=True)
+    date = models.DateField()
+    reason = models.TextField()
+    issued_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True)
+    issued_at = models.DateTimeField(auto_now_add=True)
+    taxable_value = models.DecimalField(max_digits=14, decimal_places=2)
+    cgst_amount = models.DecimalField(max_digits=14, decimal_places=2)
+    sgst_amount = models.DecimalField(max_digits=14, decimal_places=2)
+    igst_amount = models.DecimalField(max_digits=14, decimal_places=2)
+    amount = models.DecimalField(max_digits=14, decimal_places=2)
+    objects = ImmutableRecordQuerySet.as_manager()
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValidationError("Issued credit notes are immutable.")
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("Issued credit notes cannot be deleted.")
+
+    def __str__(self):
+        return self.number
+
+
+class AuditEvent(models.Model):
+    """Append-only application event for invoice and production changes."""
+
+    invoice = models.ForeignKey(Invoice, on_delete=models.PROTECT, null=True, blank=True, related_name="audit_events")
+    run = models.ForeignKey(ProductionRun, on_delete=models.PROTECT, null=True, blank=True, related_name="audit_events")
+    actor = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True)
+    action = models.CharField(max_length=40)
+    created_at = models.DateTimeField(auto_now_add=True)
+    details = models.JSONField(default=dict)
+    objects = ImmutableRecordQuerySet.as_manager()
+
+    class Meta:
+        ordering = ["-created_at", "-pk"]
+        constraints = [models.CheckConstraint(
+            condition=(models.Q(invoice__isnull=False, run__isnull=True) | models.Q(invoice__isnull=True, run__isnull=False)),
+            name="audit_event_one_document",
+        )]
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValidationError("Audit events are immutable.")
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("Audit events cannot be deleted.")
 
 
 class StockAdjustment(models.Model):

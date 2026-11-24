@@ -13,11 +13,11 @@ from django.utils import timezone
 from accounts.models import AccessRequest, User
 from accounts.views import roles_required
 
-from .billing import invoice_calculation, issue_invoice, record_payment
-from .forms import CompanyProfileForm, InvoiceIssueForm, OrderLineEntryFormSet, PaymentEntryForm, SalesOrderForm
-from .invoice_pdf import invoice_pdf_bytes
+from .billing import invoice_calculation, issue_credit_note, issue_invoice, record_payment
+from .forms import CompanyProfileForm, CreditNoteForm, InvoiceIssueForm, OrderLineEntryFormSet, PaymentEntryForm, SalesOrderForm
+from .invoice_pdf import credit_note_pdf_bytes, invoice_pdf_bytes
 from .ledger import approve_order, dispatch_order, reject_order, stock_shortages_for_order
-from .models import CompanyProfile, Customer, Invoice, Order, OrderLine, Product, StockMovement
+from .models import CompanyProfile, CreditNote, Customer, Invoice, Order, OrderLine, Product, StockMovement
 from .units import convert_quantity
 
 
@@ -203,6 +203,7 @@ def invoice_issue(request, pk):
                 issue_date=form.cleaned_data["issue_date"], due_date=form.cleaned_data["due_date"],
                 place_of_supply_state=form.cleaned_data["place_of_supply_state"],
                 place_of_supply_code=form.cleaned_data["place_of_supply_code"],
+                issued_by=request.user,
             )
         except (ValidationError, IntegrityError) as exc:
             error = str(exc)
@@ -222,7 +223,10 @@ def _visible_invoice(request, pk):
 @sales_access
 def invoice_detail(request, pk):
     invoice = _visible_invoice(request, pk)
-    return render(request, "erp/invoice_detail.html", {"invoice": invoice, "lines": invoice.lines.all(), "payments": invoice.payments.order_by("date", "pk")})
+    return render(request, "erp/invoice_detail.html", {
+        "invoice": invoice, "lines": invoice.lines.all(), "payments": invoice.payments.order_by("date", "pk"),
+        "credit_note": getattr(invoice, "credit_note", None), "audit_events": invoice.audit_events.select_related("actor"),
+    })
 
 
 @sales_access
@@ -236,13 +240,48 @@ def invoice_pdf(request, pk):
 @admin_access
 def payment_new(request, pk):
     invoice = get_object_or_404(Invoice, pk=pk)
+    if hasattr(invoice, "credit_note"):
+        raise PermissionDenied("Credited invoices cannot receive payments.")
     form = PaymentEntryForm(request.POST or None)
     if request.method == "POST" and form.is_valid():
         try:
-            record_payment(invoice, **form.cleaned_data)
+            record_payment(invoice, **form.cleaned_data, recorded_by=request.user)
         except (ValidationError, IntegrityError) as exc:
             form.add_error(None, str(exc))
         else:
             messages.success(request, "Payment recorded; outstanding balance updated.")
             return redirect("invoice_detail", pk=invoice.pk)
     return render(request, "erp/payment_form.html", {"invoice": invoice, "form": form})
+
+
+@admin_access
+def credit_note_new(request, pk):
+    invoice = get_object_or_404(Invoice.objects.select_related("order__customer"), pk=pk)
+    if hasattr(invoice, "credit_note"):
+        return redirect("invoice_detail", pk=pk)
+    form = CreditNoteForm(request.POST or None)
+    if request.method == "POST" and form.is_valid():
+        try:
+            note = issue_credit_note(invoice, **form.cleaned_data, issued_by=request.user)
+        except (ValidationError, IntegrityError) as exc:
+            form.add_error(None, str(exc))
+        else:
+            messages.success(request, f"Credit note {note.number} issued. The original invoice remains in the audit trail.")
+            return redirect("invoice_detail", pk=pk)
+    return render(request, "erp/credit_note_form.html", {"invoice": invoice, "form": form})
+
+
+@sales_access
+def credit_note_detail(request, pk):
+    note = get_object_or_404(CreditNote.objects.select_related("invoice"), pk=pk)
+    _visible_invoice(request, note.invoice_id)
+    return render(request, "erp/credit_note_detail.html", {"note": note, "invoice": note.invoice, "lines": note.invoice.lines.all()})
+
+
+@sales_access
+def credit_note_pdf(request, pk):
+    note = get_object_or_404(CreditNote.objects.select_related("invoice"), pk=pk)
+    _visible_invoice(request, note.invoice_id)
+    response = HttpResponse(credit_note_pdf_bytes(note), content_type="application/pdf")
+    response["Content-Disposition"] = f'attachment; filename="{note.number.replace("/", "-")}.pdf"'
+    return response

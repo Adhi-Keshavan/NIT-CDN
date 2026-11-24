@@ -5,6 +5,7 @@ from django.urls import path
 from accounts import views
 from erp import views as erp_views
 from erp import order_views
+from erp import report_views
 
 
 urlpatterns = [
@@ -35,4 +36,9 @@ urlpatterns = [
     path("invoices/<int:pk>/", order_views.invoice_detail, name="invoice_detail"),
     path("invoices/<int:pk>/pdf/", order_views.invoice_pdf, name="invoice_pdf"),
     path("invoices/<int:pk>/payments/new/", order_views.payment_new, name="payment_new"),
+    path("invoices/<int:pk>/credit-note/new/", order_views.credit_note_new, name="credit_note_new"),
+    path("credit-notes/<int:pk>/", order_views.credit_note_detail, name="credit_note_detail"),
+    path("credit-notes/<int:pk>/pdf/", order_views.credit_note_pdf, name="credit_note_pdf"),
+    path("reports/", report_views.report_index, name="report_index"),
+    path("reports/<slug:kind>/", report_views.report_detail, name="report_detail"),
 ]

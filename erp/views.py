@@ -104,7 +104,7 @@ def run_new(request):
                             unit=line.unit,
                             wastage_quantity=entry_form.cleaned_data[f"wastage_{line.pk}"],
                         )
-                    complete_production_run(run)
+                    complete_production_run(run, posted_by=request.user)
             except (ValidationError, IntegrityError) as exc:
                 entry_form.add_error(None, str(exc))
             else:
@@ -155,6 +155,7 @@ def run_detail(request, pk):
         "run": run, "rows": rows, "overhead_form": overhead_form,
         "movements": run.stock_movements.select_related("item").order_by("item__sku"),
         "revisions": run.cost_revisions.select_related("changed_by")[:10],
+        "audit_events": run.audit_events.select_related("actor"),
     })
 
 

@@ -16,7 +16,7 @@
       <a href="{% url 'dashboard' %}">Overview</a>
       {% if user.role == 'salesman' or user.role == 'admin' %}<a href="{% url 'sales' %}">Sales</a>{% endif %}
       {% if user.role == 'production' or user.role == 'admin' %}<a href="{% url 'production' %}">Production</a>{% endif %}
-      {% if user.role == 'admin' %}<a href="{% url 'management' %}">Management</a><a href="{% url 'access_requests' %}">People</a><a href="{% url 'admin:index' %}">Admin setup</a>{% endif %}
+      {% if user.role == 'admin' %}<a href="{% url 'management' %}">Management</a><a href="{% url 'report_index' %}">Reports</a><a href="{% url 'access_requests' %}">People</a><a href="{% url 'admin:index' %}">Admin setup</a>{% endif %}
     </nav>
     <div class="header-user"><span class="role-pill">{{ user.get_role_display }}</span><span class="header-username">{{ user.username }}</span>
       <form method="post" action="{% url 'logout' %}">{% csrf_token %}<button type="submit" class="header-logout">Sign out</button></form>

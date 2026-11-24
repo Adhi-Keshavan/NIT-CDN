@@ -1,0 +1,10 @@
+{% extends "erp/business_base.html" %}
+{% block title %}Reports{% endblock %}
+{% block content %}
+<section class="hero"><div><span class="eyebrow">Admin reports</span><h1>Registers and analysis</h1><p>Choose a report, set the inclusive date range, then export the same rows as CSV or PDF.</p></div></section>
+<div class="grid" style="margin-top:1rem">
+  {% for key, spec in reports.items %}
+  <div class="feature-card"><div><h2>{{ spec.0 }}</h2><p>Filter by date and inspect the source records.</p></div><a class="button" href="{% url 'report_detail' key %}">Open report →</a></div>
+  {% endfor %}
+</div>
+{% endblock %}

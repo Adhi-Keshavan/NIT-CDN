@@ -5,7 +5,7 @@ from django.core.exceptions import ValidationError
 from .ledger import approve_order, complete_production_run, dispatch_order, post_adjustment, receive_purchase
 
 from .models import (
-    BOMLine, Customer, Invoice, InvoiceLine, Item, Material, Order, OrderLine,
+    AuditEvent, BOMLine, CreditNote, Customer, Invoice, InvoiceLine, Item, Material, Order, OrderLine,
     Payment, Product, ProductionConsumption, ProductionCostRevision, ProductionRun, Purchase,
     StockAdjustment, StockAdjustmentLine, StockMovement,
 )
@@ -119,7 +119,7 @@ class ProductionRunAdmin(PostedReadOnlyMixin, admin.ModelAdmin):
 
     @admin.action(description="Complete selected runs and post stock")
     def complete_selected(self, request, queryset):
-        post_selected(self, request, queryset, complete_production_run)
+        post_selected(self, request, queryset, lambda run: complete_production_run(run, posted_by=request.user))
 
 
 @admin.register(StockAdjustment)
@@ -190,6 +190,16 @@ class InvoiceLineAdmin(IssuedDocumentAdmin):
 @admin.register(Payment)
 class PaymentAdmin(IssuedDocumentAdmin):
     list_display = ("reference", "invoice", "date", "amount")
+
+
+@admin.register(CreditNote)
+class CreditNoteAdmin(IssuedDocumentAdmin):
+    list_display = ("number", "date", "invoice", "amount", "issued_by", "issued_at")
+
+
+@admin.register(AuditEvent)
+class AuditEventAdmin(IssuedDocumentAdmin):
+    list_display = ("created_at", "action", "actor", "invoice", "run")
 
 
 for model in (Customer, Item, Material):

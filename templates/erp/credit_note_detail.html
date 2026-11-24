@@ -1,0 +1,10 @@
+{% extends "erp/business_base.html" %}
+{% block title %}Credit note {{ note.number }}{% endblock %}
+{% block content %}
+<h1>Credit note {{ note.number }}</h1>
+<p>{{ note.date }} · Full reversal of <a href="{% url 'invoice_detail' invoice.pk %}">{{ invoice.number }}</a></p>
+<div class="actions"><a class="button" href="{% url 'credit_note_pdf' note.pk %}">Download credit note PDF</a></div>
+<div class="card"><p><strong>Supplier:</strong> {{ invoice.supplier_name }} · GSTIN {{ invoice.supplier_gstin }}</p><p><strong>Customer:</strong> {{ invoice.customer_name }} · GSTIN {{ invoice.customer_gstin|default:"Unregistered" }}</p><p><strong>Reason:</strong> {{ note.reason }}</p><p><strong>Issued by:</strong> {{ note.issued_by.username|default:"System" }} at {{ note.issued_at }}</p></div>
+<div class="card table-wrap"><table><thead><tr><th>Product</th><th>HSN</th><th>Quantity</th><th>Taxable reversed</th><th>GST rate</th></tr></thead><tbody>{% for line in lines %}<tr><td>{{ line.description }}</td><td>{{ line.hsn_code }}</td><td>{{ line.quantity }} {{ line.unit }}</td><td>₹{{ line.taxable_value }}</td><td>{{ line.gst_rate }}%</td></tr>{% endfor %}</tbody></table></div>
+<div class="card"><p>Taxable ₹{{ note.taxable_value }} · CGST ₹{{ note.cgst_amount }} · SGST ₹{{ note.sgst_amount }} · IGST ₹{{ note.igst_amount }}</p><h2>Total credit ₹{{ note.amount }}</h2></div>
+{% endblock %}

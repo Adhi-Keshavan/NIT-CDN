@@ -8,7 +8,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from .costing import material_issue_cost
-from .models import BOMLine, Item, Order, ProductionCostRevision, ProductionRun, Purchase, StockAdjustment, StockMovement
+from .models import AuditEvent, BOMLine, Item, Order, ProductionCostRevision, ProductionRun, Purchase, StockAdjustment, StockMovement
 from .units import convert_quantity
 
 
@@ -103,7 +103,7 @@ def receive_purchase(purchase):
 
 
 @transaction.atomic
-def complete_production_run(run):
+def complete_production_run(run, *, posted_by=None):
     """Post actual material issues and finished output for a saved run."""
     run = ProductionRun.objects.select_for_update().select_related("product__item").get(pk=run.pk)
     run.full_clean()
@@ -142,6 +142,7 @@ def complete_production_run(run):
     if run.status == ProductionRun.Status.PLANNED:
         run.status = ProductionRun.Status.COMPLETED
         run.save(update_fields=["status"])
+        AuditEvent.objects.create(run=run, actor=posted_by, action="run_posted", details={"reference": run.reference, "good_output": str(run.completed_quantity), "unit": run.unit})
     for entry in consumptions:
         _record(
             document=run, source_type=StockMovement.Source.PRODUCTION,
@@ -171,12 +172,17 @@ def update_run_overheads(run, *, labour_cost, power_cost, changed_by):
     run.labour_cost = labour_cost
     run.power_cost = power_cost
     run.full_clean()
+    run._allow_overhead_change = True
     run.save(update_fields=["labour_cost", "power_cost"])
     ProductionCostRevision.objects.create(
         run=run, changed_by=changed_by,
         old_labour_cost=old_labour, new_labour_cost=labour_cost,
         old_power_cost=old_power, new_power_cost=power_cost,
     )
+    AuditEvent.objects.create(run=run, actor=changed_by, action="overheads_changed", details={
+        "old_labour": str(old_labour), "new_labour": str(labour_cost),
+        "old_power": str(old_power), "new_power": str(power_cost),
+    })
     return run
 
 
@@ -240,6 +246,8 @@ def dispatch_order(order):
         raise ValidationError("Order must be approved before dispatch.")
     if not order.invoices.exists():
         raise ValidationError("Issue an invoice before dispatch.")
+    if order.invoices.filter(credit_note__isnull=False).exists():
+        raise ValidationError("A credited invoice cannot be dispatched.")
     lines = list(order.lines.select_related("product__item").order_by("line_number"))
     if not lines:
         raise ValidationError("Order needs at least one line.")
