@@ -9,7 +9,9 @@ from erp import order_views
 
 urlpatterns = [
     path("admin/", admin.site.urls),
-    path("login/", auth_views.LoginView.as_view(template_name="registration/login.html"), name="login"),
+    path("login/", views.RoleLoginView.as_view(), name="login"),
+    path("signup/", views.signup, name="signup"),
+    path("signup/success/", views.signup_success, name="signup_success"),
     path("logout/", auth_views.LogoutView.as_view(), name="logout"),
     path("", views.dashboard, name="dashboard"),
     path("sales/", order_views.sales_home, name="sales"),
@@ -24,6 +26,8 @@ urlpatterns = [
     path("production/runs/<int:pk>/", erp_views.run_detail, name="run_detail"),
     path("production/stock/", erp_views.stock_summary, name="stock_summary"),
     path("management/", order_views.management_home, name="management"),
+    path("management/access/", views.access_requests, name="access_requests"),
+    path("management/access/<int:pk>/review/", views.access_request_review, name="access_request_review"),
     path("management/company/", order_views.company_profile, name="company_profile"),
     path("management/orders/<int:pk>/", order_views.order_review, name="order_review"),
     path("management/orders/<int:pk>/edit/", order_views.order_edit, name="order_edit"),

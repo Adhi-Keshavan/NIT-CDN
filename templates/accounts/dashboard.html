@@ -1,10 +1,37 @@
-<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><title>Dashboard</title></head>
-<body><h1>Dashboard</h1><p>Signed in as {{ user.username }} ({{ user.get_role_display }}).</p>
-<nav>
-{% if user.role == 'salesman' or user.role == 'admin' %}<a href="{% url 'sales' %}">Sales</a>{% endif %}
-{% if user.role == 'production' or user.role == 'admin' %}<a href="{% url 'production' %}">Production</a>{% endif %}
-{% if user.role == 'admin' %}<a href="{% url 'management' %}">Management</a>{% endif %}
-</nav>
-<form method="post" action="{% url 'logout' %}">{% csrf_token %}<button type="submit">Sign out</button></form>
-</body></html>
+{% extends "erp/business_base.html" %}
+{% block title %}Overview{% endblock %}
+{% block content %}
+<section class="hero">
+  <div><span class="eyebrow">{{ user.get_role_display }} workspace</span><h1>Welcome, {{ user.first_name|default:user.username }}.</h1>
+    {% if user.role == 'admin' %}<p>Review access, manage orders, oversee production, and follow every invoice through payment.</p>
+    {% elif user.role == 'production' %}<p>Keep stock accurate by recording purchases, production issues, and good output.</p>
+    {% else %}<p>Capture customer orders quickly and follow each one through approval and dispatch.</p>{% endif %}
+  </div>
+  {% if user.role == 'salesman' %}<a class="button" href="{% url 'sales_order_new' %}">Create order →</a>
+  {% elif user.role == 'production' %}<a class="button" href="{% url 'run_new' %}">Start production →</a>
+  {% else %}<a class="button" href="{% url 'management' %}">Open management →</a>{% endif %}
+</section>
+<div class="stat-grid">
+  {% if user.role == 'admin' %}
+    <div class="stat-card"><strong>{{ draft_order_count }}</strong><span>Orders to review</span></div>
+    <div class="stat-card"><strong>{{ pending_access_count }}</strong><span>Access requests</span></div>
+    <div class="stat-card"><strong>{{ invoice_count }}</strong><span>Issued invoices</span></div>
+  {% elif user.role == 'production' %}
+    <div class="stat-card"><strong>{{ run_count }}</strong><span>Production runs</span></div>
+    <div class="stat-card"><strong>{{ purchase_count }}</strong><span>Purchases received</span></div>
+  {% else %}<div class="stat-card"><strong>{{ my_order_count }}</strong><span>Your orders</span></div>{% endif %}
+</div>
+<div class="section-heading"><h2>Your tools</h2><span class="muted">Access follows your approved role</span></div>
+<div class="grid">
+  {% if user.role == 'salesman' or user.role == 'admin' %}
+  <div class="feature-card"><div><span class="eyebrow">Sales</span><h2>Customer orders</h2><p>Add products at their master prices and track order status.</p></div><a class="button secondary" href="{% url 'sales' %}">Open sales →</a></div>
+  {% endif %}
+  {% if user.role == 'production' or user.role == 'admin' %}
+  <div class="feature-card"><div><span class="eyebrow">Factory</span><h2>Production & stock</h2><p>Review the BOM, post runs, and check live stock balances.</p></div><a class="button secondary" href="{% url 'production' %}">Open production →</a></div>
+  {% endif %}
+  {% if user.role == 'admin' %}
+  <div class="feature-card"><div><span class="eyebrow">Management</span><h2>Orders & payments</h2><p>Approve stock-backed orders, issue invoices, and record payments.</p></div><a class="button secondary" href="{% url 'management' %}">Open management →</a></div>
+  <div class="feature-card"><div><span class="eyebrow">People</span><h2>Access requests</h2><p>Approve the role requested by each new user.</p></div><a class="button secondary" href="{% url 'access_requests' %}">Review people →</a></div>
+  {% endif %}
+</div>
+{% endblock %}

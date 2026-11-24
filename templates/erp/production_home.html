@@ -1,8 +1,7 @@
 {% extends "erp/base.html" %}
 {% block title %}Supervisor dashboard{% endblock %}
 {% block content %}
-<h1>Supervisor dashboard</h1>
-<p class="muted">Record receipts and production at their source. Stock updates when a document is posted.</p>
+<section class="hero"><div><span class="eyebrow">Factory workspace</span><h1>Production</h1><p>Record purchases and good output at their source. Every posting updates the stock ledger.</p></div><a class="button" href="{% url 'run_new' %}">Start run →</a></section>
 <div class="grid">
   <div class="card"><h2>Purchase receipt</h2><p>Add material stock at the received rate.</p><a class="button" href="{% url 'purchase_new' %}">Receive purchase</a></div>
   <div class="card"><h2>Production run</h2><p>Review the BOM, enter actual issues, and post good output.</p><a class="button" href="{% url 'run_new' %}">Start run</a></div>

@@ -10,7 +10,7 @@ from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 
-from accounts.models import User
+from accounts.models import AccessRequest, User
 from accounts.views import roles_required
 
 from .billing import invoice_calculation, issue_invoice, record_payment
@@ -91,6 +91,7 @@ def management_home(request):
     return render(request, "erp/management_home.html", {
         "orders": orders,
         "company": CompanyProfile.objects.filter(pk=1).first(),
+        "pending_access_count": AccessRequest.objects.filter(status=AccessRequest.Status.PENDING).count(),
         "customers": [(customer, sum((invoice.balance_due for invoice in Invoice.objects.filter(order__customer=customer)), Decimal("0.00"))) for customer in Customer.objects.order_by("name")],
     })
 

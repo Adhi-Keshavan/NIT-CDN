@@ -1,8 +1,8 @@
 {% extends "erp/business_base.html" %}
 {% block title %}Management{% endblock %}
 {% block content %}
-<h1>Order management</h1>
-<p><a class="button secondary" href="{% url 'company_profile' %}">{% if company %}Edit company invoice details{% else %}Set company invoice details{% endif %}</a></p>
+<section class="hero"><div><span class="eyebrow">Admin workspace</span><h1>Order management</h1><p>Review orders, check stock, issue invoices, dispatch once, and follow payments.</p></div><a class="button" href="{% url 'access_requests' %}">People {% if pending_access_count %}({{ pending_access_count }}){% endif %} →</a></section>
+<div class="actions" style="margin-top:1rem"><a class="button secondary" href="{% url 'company_profile' %}">{% if company %}Edit company invoice details{% else %}Set company invoice details{% endif %}</a><a class="button secondary" href="{% url 'admin:index' %}">Products & customers</a></div>
 <div class="card"><h2>Orders</h2><div class="table-wrap"><table><thead><tr><th>Reference</th><th>Customer</th><th>Salesperson</th><th>Date</th><th>Status</th></tr></thead><tbody>
 {% for order in orders %}<tr><td><a href="{% url 'order_review' order.pk %}">{{ order.reference }}</a></td><td>{{ order.customer.name }}</td><td>{{ order.salesperson.username }}</td><td>{{ order.date }}</td><td>{{ order.get_status_display }}</td></tr>{% empty %}<tr><td colspan="5">No orders yet.</td></tr>{% endfor %}
 </tbody></table></div></div>

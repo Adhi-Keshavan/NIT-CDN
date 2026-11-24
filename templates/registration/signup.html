@@ -1,0 +1,22 @@
+{% extends "registration/auth_base.html" %}
+{% block title %}Request access{% endblock %}
+{% block side_title %}Your role, your workspace.{% endblock %}
+{% block side_content %}<p>Request access as a salesperson, production supervisor, or admin. An existing admin reviews every new account before it can sign in.</p>
+<ul><li>Sales: customers and your orders</li><li>Production: purchases, runs, and stock</li><li>Admin: every workspace and approvals</li></ul>{% endblock %}
+{% block panel %}
+<span class="eyebrow">New account</span><h1>Request access</h1>
+<p class="muted">Choose the role you need. Your account becomes available after admin approval.</p>
+<form method="post">{% csrf_token %}{{ form.non_field_errors }}
+  <label for="{{ form.username.id_for_label }}">Username</label>{{ form.username }}{{ form.username.errors }}
+  <div class="grid"><div><label for="{{ form.first_name.id_for_label }}">First name</label>{{ form.first_name }}{{ form.first_name.errors }}</div>
+  <div><label for="{{ form.last_name.id_for_label }}">Last name</label>{{ form.last_name }}{{ form.last_name.errors }}</div></div>
+  <label for="{{ form.email.id_for_label }}">Email</label>{{ form.email }}{{ form.email.errors }}
+  <label for="{{ form.requested_role.id_for_label }}">Role you need</label>{{ form.requested_role }}{{ form.requested_role.errors }}
+  <label for="{{ form.password1.id_for_label }}">Password</label>{{ form.password1 }}{{ form.password1.errors }}
+  <label for="{{ form.password2.id_for_label }}">Confirm password</label>{{ form.password2 }}{{ form.password2.errors }}
+  <p><label><input type="checkbox" id="show-passwords"> Show passwords</label></p>
+  <button class="button" type="submit">Send access request</button>
+</form>
+<p class="auth-link">Already have an account? <a href="{% url 'login' %}">Sign in</a></p>
+<script>document.getElementById('show-passwords').addEventListener('change', e => { document.querySelectorAll('input[type=password], input[data-revealed]').forEach(input => { input.type = e.target.checked ? 'text' : 'password'; input.dataset.revealed = e.target.checked ? 'true' : ''; }); });</script>
+{% endblock %}

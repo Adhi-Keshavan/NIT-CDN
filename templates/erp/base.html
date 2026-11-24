@@ -1,52 +1,11 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}Production{% endblock %} · NIT-CDN</title>
-  <style>
-    :root { color-scheme: light; font-family: system-ui, sans-serif; background: #f5f6f2; color: #202822; }
-    * { box-sizing: border-box; }
-    body { margin: 0; }
-    header { background: #173c2f; color: white; padding: 1rem max(1rem, calc((100vw - 1100px)/2)); }
-    header a { color: white; text-decoration: none; margin-right: 1rem; }
-    header nav { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
-    header form { display: inline; margin-left: auto; }
-    header button { background: transparent; border: 1px solid #aec8b6; color: white; padding: .4rem .7rem; }
-    main { max-width: 1100px; margin: 2rem auto; padding: 0 1rem 3rem; }
-    h1, h2 { line-height: 1.2; }
-    .card { background: white; border: 1px solid #d8dfd8; border-radius: .6rem; padding: 1.2rem; margin: 1rem 0; }
-    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; }
-    .button, button { display: inline-block; background: #166342; color: white; border: 0; border-radius: .35rem; padding: .65rem .9rem; text-decoration: none; cursor: pointer; font: inherit; }
-    a { color: #145b3d; }
-    input, select { width: 100%; max-width: 35rem; padding: .55rem; border: 1px solid #9cab9f; border-radius: .3rem; font: inherit; }
-    label { display: block; font-weight: 600; margin-bottom: .3rem; }
-    form p { margin: 1rem 0; }
-    .helptext { display: block; color: #526156; font-size: .9rem; }
-    .errorlist { color: #a11d21; }
-    .table-wrap { overflow-x: auto; }
-    table { border-collapse: collapse; width: 100%; min-width: 600px; }
-    th, td { padding: .65rem; border-bottom: 1px solid #d8dfd8; text-align: left; vertical-align: top; }
-    th { background: #e9efe9; }
-    .alert { color: #a11d21; font-weight: 700; }
-    .ok { color: #166342; }
-    .message { background: #dff1e4; padding: .8rem; border-radius: .3rem; }
-    .muted { color: #526156; }
-    @media (max-width: 650px) { main { margin: 1rem auto; } header nav { gap: .75rem; } header form { margin-left: 0; } }
-  </style>
-</head>
-<body>
-<header><nav>
-  <a href="{% url 'production' %}"><strong>NIT-CDN · Production</strong></a>
-  <a href="{% url 'purchase_list' %}">Purchases</a>
-  <a href="{% url 'run_list' %}">Runs</a>
-  <a href="{% url 'stock_summary' %}">Stock</a>
-  <a href="{% url 'dashboard' %}">Dashboard</a>
-  <form method="post" action="{% url 'logout' %}">{% csrf_token %}<button type="submit">Sign out</button></form>
-</nav></header>
-<main>
-  {% for message in messages %}<p class="message">{{ message }}</p>{% endfor %}
-  {% block content %}{% endblock %}
-</main>
-</body>
-</html>
+{% extends "erp/business_base.html" %}
+{% block subnav %}
+<nav class="subnav" aria-label="Production navigation">
+  <div class="subnav-inner">
+    <a href="{% url 'production' %}">Production home</a>
+    <a href="{% url 'purchase_list' %}">Purchases</a>
+    <a href="{% url 'run_list' %}">Runs</a>
+    <a href="{% url 'stock_summary' %}">Stock</a>
+  </div>
+</nav>
+{% endblock %}

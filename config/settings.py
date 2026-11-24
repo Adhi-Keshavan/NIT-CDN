@@ -76,6 +76,7 @@ def database_from_url(raw_url: str) -> dict:
 DATABASES = {"default": database_from_url(os.getenv("DATABASE_URL", "sqlite:///db.sqlite3"))}
 
 AUTH_USER_MODEL = "accounts.User"
+AUTHENTICATION_BACKENDS = ["accounts.backends.BusinessRoleBackend"]
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
     {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
