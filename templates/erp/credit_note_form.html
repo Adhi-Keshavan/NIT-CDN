@@ -1,0 +1,10 @@
+{% extends "erp/business_base.html" %}
+{% block title %}Credit note for {{ invoice.number }}{% endblock %}
+{% block content %}
+<p><a href="{% url 'invoice_detail' invoice.pk %}">← Invoice {{ invoice.number }}</a></p>
+<h1>Issue full credit note</h1>
+<div class="card"><p>This reverses the invoice's full taxable value and GST while preserving the original invoice. It does not return dispatched stock; record a separate stock receipt when goods physically return.</p>
+<p><strong>Invoice total: ₹{{ invoice.amount }}</strong></p>
+{% if invoice.payments.exists %}<p class="alert">This invoice has payments. Reconcile or refund them before issuing a full credit note.</p>{% endif %}
+<form method="post">{% csrf_token %}{{ form.as_p }}<button type="submit" {% if invoice.payments.exists %}disabled{% endif %}>Issue credit note</button></form></div>
+{% endblock %}

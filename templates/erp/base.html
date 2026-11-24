@@ -1,0 +1,11 @@
+{% extends "erp/business_base.html" %}
+{% block subnav %}
+<nav class="subnav" aria-label="Production navigation">
+  <div class="subnav-inner">
+    <a href="{% url 'production' %}">Production home</a>
+    <a href="{% url 'purchase_list' %}">Purchases</a>
+    <a href="{% url 'run_list' %}">Runs</a>
+    <a href="{% url 'stock_summary' %}">Stock</a>
+  </div>
+</nav>
+{% endblock %}

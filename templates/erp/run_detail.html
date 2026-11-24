@@ -1,0 +1,18 @@
+{% extends "erp/base.html" %}
+{% load erp_format %}
+{% block title %}Run {{ run.reference }}{% endblock %}
+{% block content %}
+<h1>Run {{ run.reference }}</h1>
+<p><strong>{{ run.product.item.name }}</strong> · {{ run.date }} · {{ run.get_status_display }}</p>
+<div class="grid">
+  <div class="card"><h2>Yield</h2><p>Expected {{ run.planned_quantity|quantity }} {{ run.unit|unit_label }} · good {{ run.completed_quantity|quantity }} {{ run.unit|unit_label }}</p><p class="{% if run.yield_variance_alert %}alert{% else %}ok{% endif %}">Variance {{ run.yield_variance_percent|floatformat:2 }}% {% if run.yield_variance_alert %}· Over 3% tolerance{% endif %}</p></div>
+  <div class="card"><h2>Cost</h2><p>Materials ₹{{ run.material_cost|floatformat:2 }} + labour ₹{{ run.labour_cost|floatformat:2 }} + gas/power ₹{{ run.power_cost|floatformat:2 }}</p><p><strong>Total ₹{{ run.total_cost|floatformat:2 }}</strong></p><p><strong>₹{{ run.cost_per_packet|floatformat:2 }} per good {{ run.product.item.base_unit }}</strong></p><p>Margin against ₹{{ run.product.selling_price|floatformat:2 }} selling price: ₹{{ run.margin_per_packet|floatformat:2 }} per {{ run.product.item.base_unit }}</p></div>
+</div>
+<div class="card"><h2>Materials and packaging</h2><div class="table-wrap"><table><thead><tr><th>Material</th><th>Standard</th><th>Actual issued</th><th>Damaged / wasted</th><th>Variance</th><th>Average rate snapshot</th><th>Cost</th></tr></thead><tbody>
+{% for row in rows %}<tr><td>{{ row.entry.material.item.name }}</td><td>{{ row.expected|quantity }} {{ row.expected_unit|unit_label }}</td><td>{{ row.entry.quantity|quantity }} {{ row.entry.unit|unit_label }}</td><td>{{ row.entry.wastage_quantity|quantity }} {{ row.entry.unit|unit_label }}</td><td class="{% if row.alert %}alert{% endif %}">{{ row.variance|floatformat:2 }}% {% if row.alert %}· Alert{% endif %}</td><td>₹{{ row.entry.unit_cost_snapshot|floatformat:3 }} / {{ row.entry.material.item.base_unit|unit_label }}</td><td>₹{{ row.entry.extended_cost|floatformat:2 }}</td></tr>{% endfor %}
+</tbody></table></div></div>
+<div class="card"><h2>Ledger entries</h2><div class="table-wrap"><table><thead><tr><th>Item</th><th>Movement</th><th>Source</th></tr></thead><tbody>{% for movement in movements %}<tr><td>{{ movement.item.name }}</td><td>{{ movement.quantity|quantity }} {{ movement.unit|unit_label }}</td><td>{{ movement.source_type }}:{{ movement.source_reference }}</td></tr>{% endfor %}</tbody></table></div></div>
+<div class="card"><h2>Update run overheads</h2><p>Costs can be entered after production. Each change records the user and time.</p><form method="post">{% csrf_token %}{{ overhead_form.as_p }}<button type="submit">Save overheads</button></form></div>
+{% if revisions %}<div class="card"><h2>Overhead history</h2><ul>{% for revision in revisions %}<li>{{ revision.changed_at }} · {{ revision.changed_by.username }} · labour ₹{{ revision.old_labour_cost }} → ₹{{ revision.new_labour_cost }}, gas/power ₹{{ revision.old_power_cost }} → ₹{{ revision.new_power_cost }}</li>{% endfor %}</ul></div>{% endif %}
+<div class="card"><h2>Audit trail</h2><ul>{% for event in audit_events %}<li>{{ event.created_at }} · {{ event.actor.username|default:"System" }} · {{ event.action }} · {{ event.details }}</li>{% empty %}<li>No recorded events.</li>{% endfor %}</ul></div>
+{% endblock %}

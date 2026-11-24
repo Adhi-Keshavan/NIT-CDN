@@ -1,4 +1,4 @@
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
@@ -28,6 +28,23 @@ class Customer(models.Model):
 
     def __str__(self):
         return f"{self.code} — {self.name}"
+
+
+class CompanyProfile(models.Model):
+    name = models.CharField(max_length=200)
+    address = models.TextField()
+    state = models.CharField(max_length=50)
+    state_code = models.CharField(max_length=2)
+    gstin = models.CharField(max_length=15)
+
+    def clean(self):
+        if len(self.state_code) != 2 or not self.state_code.isdigit():
+            raise ValidationError({"state_code": "Enter a two-digit GST state code."})
+        if len(self.gstin) != 15 or self.gstin[:2] != self.state_code or not self.gstin[2:].isalnum():
+            raise ValidationError({"gstin": "Enter a 15-character GSTIN beginning with the state code."})
+
+    def __str__(self):
+        return self.name
 
 
 class Item(models.Model):
@@ -97,8 +114,12 @@ class Material(models.Model):
             raise ValidationError({"item": "The item must have material kind."})
 
     def save(self, *args, **kwargs):
-        if self.pk and type(self).objects.get(pk=self.pk).item_id != self.item_id:
-            raise ValidationError("A material's stock item cannot be reassigned.")
+        if self.pk:
+            original = type(self).objects.get(pk=self.pk)
+            if original.item_id != self.item_id:
+                raise ValidationError("A material's stock item cannot be reassigned.")
+            if self.item.movements.exists() and original.standard_cost != self.standard_cost:
+                raise ValidationError("Opening material cost cannot change after stock is posted.")
         super().save(*args, **kwargs)
 
     def __str__(self):
@@ -166,11 +187,17 @@ class ProductionRun(models.Model):
     completed_quantity = models.DecimalField(max_digits=18, decimal_places=6, default=0)
     unit = models.CharField(max_length=6, choices=Unit.choices)
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.PLANNED)
+    labour_cost = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    power_cost = models.DecimalField(max_digits=14, decimal_places=2, default=0, help_text="Gas and power overhead")
+
+    VARIANCE_ALERT_PERCENT = Decimal("3")
 
     class Meta:
         constraints = [
             models.CheckConstraint(condition=models.Q(planned_quantity__gt=0), name="positive_planned_quantity"),
             models.CheckConstraint(condition=models.Q(completed_quantity__gte=0), name="nonnegative_completed_quantity"),
+            models.CheckConstraint(condition=models.Q(labour_cost__gte=0), name="nonnegative_run_labour_cost"),
+            models.CheckConstraint(condition=models.Q(power_cost__gte=0), name="nonnegative_run_power_cost"),
         ]
 
     def clean(self):
@@ -179,6 +206,10 @@ class ProductionRun(models.Model):
 
     def save(self, *args, **kwargs):
         _protect_posted_document(self, ("reference", "date", "product_id", "planned_quantity", "completed_quantity", "unit", "status"))
+        if self.pk and not getattr(self, "_allow_overhead_change", False):
+            original = type(self).objects.get(pk=self.pk)
+            if original.status == self.Status.COMPLETED and (self.labour_cost, self.power_cost) != (original.labour_cost, original.power_cost):
+                raise ValidationError("Use the run overhead service so the change is audited.")
         super().save(*args, **kwargs)
 
     @property
@@ -186,6 +217,37 @@ class ProductionRun(models.Model):
         planned = convert_quantity(self.planned_quantity, self.unit, self.product.item.base_unit, packets_per_carton=self.product.packets_per_carton)
         actual = convert_quantity(self.completed_quantity, self.unit, self.product.item.base_unit, packets_per_carton=self.product.packets_per_carton)
         return (actual - planned) * Decimal("100") / planned
+
+    @property
+    def yield_variance_alert(self):
+        return abs(self.yield_variance_percent) > self.VARIANCE_ALERT_PERCENT
+
+    @property
+    def material_cost(self):
+        return self.consumptions.aggregate(total=Coalesce(
+            Sum("extended_cost"), Value(Decimal("0")),
+            output_field=DecimalField(max_digits=18, decimal_places=2),
+        ))["total"]
+
+    @property
+    def total_cost(self):
+        return self.material_cost + self.labour_cost + self.power_cost
+
+    @property
+    def cost_per_packet(self):
+        good_output = convert_quantity(
+            self.completed_quantity, self.unit, self.product.item.base_unit,
+            packets_per_carton=self.product.packets_per_carton,
+        )
+        if good_output <= 0:
+            return None
+        return (self.total_cost / good_output).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+    @property
+    def margin_per_packet(self):
+        if self.cost_per_packet is None:
+            return None
+        return self.product.selling_price - self.cost_per_packet
 
     def __str__(self):
         return self.reference
@@ -196,14 +258,25 @@ class Order(models.Model):
         DRAFT = "draft", "Draft"
         CONFIRMED = "confirmed", "Confirmed"
         SHIPPED = "shipped", "Shipped"
+        REJECTED = "rejected", "Rejected"
 
     reference = models.CharField(max_length=60, unique=True)
     date = models.DateField()
     customer = models.ForeignKey(Customer, on_delete=models.PROTECT)
     salesperson = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.DRAFT)
+    rejection_reason = models.TextField(blank=True)
+    reviewed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True, related_name="reviewed_orders")
+    reviewed_at = models.DateTimeField(null=True, blank=True)
 
     def save(self, *args, **kwargs):
+        if self.pk:
+            original = type(self).objects.get(pk=self.pk)
+            if original.status != self.Status.DRAFT and any(
+                getattr(self, field) != getattr(original, field)
+                for field in ("reference", "date", "customer_id", "salesperson_id")
+            ):
+                raise ValidationError("Reviewed orders cannot change their customer, date, reference, or salesperson.")
         _protect_posted_document(self, ("reference", "date", "customer_id", "salesperson_id", "status"))
         super().save(*args, **kwargs)
 
@@ -231,13 +304,13 @@ class OrderLine(models.Model):
             convert_quantity(self.quantity, self.unit, self.product.item.base_unit, packets_per_carton=self.product.packets_per_carton)
 
     def save(self, *args, **kwargs):
-        if self.order_id and self.order.stock_movements.exists():
-            raise ValidationError("Dispatched order lines cannot be edited.")
+        if self.order_id and Order.objects.only("status").get(pk=self.order_id).status != Order.Status.DRAFT:
+            raise ValidationError("Reviewed order lines cannot be edited.")
         super().save(*args, **kwargs)
 
     def delete(self, *args, **kwargs):
-        if self.order.stock_movements.exists():
-            raise ValidationError("Dispatched order lines cannot be deleted.")
+        if Order.objects.only("status").get(pk=self.order_id).status != Order.Status.DRAFT:
+            raise ValidationError("Reviewed order lines cannot be deleted.")
         return super().delete(*args, **kwargs)
 
 
@@ -247,6 +320,10 @@ class ProductionConsumption(models.Model):
     quantity = models.DecimalField(max_digits=18, decimal_places=6, help_text="Actual issued quantity, including wastage")
     unit = models.CharField(max_length=6, choices=Unit.choices)
     wastage_quantity = models.DecimalField(max_digits=18, decimal_places=6, default=0)
+    standard_quantity_snapshot = models.DecimalField(max_digits=18, decimal_places=6, null=True, blank=True, editable=False)
+    standard_unit_snapshot = models.CharField(max_length=6, choices=Unit.choices, blank=True, default="", editable=False)
+    unit_cost_snapshot = models.DecimalField(max_digits=18, decimal_places=6, default=0, editable=False)
+    extended_cost = models.DecimalField(max_digits=18, decimal_places=2, default=0, editable=False)
 
     class Meta:
         constraints = [
@@ -273,14 +350,48 @@ class ProductionConsumption(models.Model):
 
     @property
     def variance_percent(self):
-        bom_line = BOMLine.objects.get(product=self.run.product, material=self.material)
-        batches = convert_quantity(
-            self.run.planned_quantity, self.run.unit, self.run.product.item.base_unit,
-            packets_per_carton=self.run.product.packets_per_carton,
-        ) / Decimal(self.run.product.expected_yield_per_batch)
-        standard = convert_quantity(bom_line.quantity, bom_line.unit, self.material.item.base_unit) * batches
+        if self.standard_quantity_snapshot is not None:
+            standard = convert_quantity(self.standard_quantity_snapshot, self.standard_unit_snapshot, self.material.item.base_unit)
+        else:
+            bom_line = BOMLine.objects.get(product=self.run.product, material=self.material)
+            batches = convert_quantity(
+                self.run.planned_quantity, self.run.unit, self.run.product.item.base_unit,
+                packets_per_carton=self.run.product.packets_per_carton,
+            ) / Decimal(self.run.product.expected_yield_per_batch)
+            standard = convert_quantity(bom_line.quantity, bom_line.unit, self.material.item.base_unit) * batches
         actual = convert_quantity(self.quantity, self.unit, self.material.item.base_unit)
         return (actual - standard) * Decimal("100") / standard
+
+    @property
+    def variance_alert(self):
+        return abs(self.variance_percent) > ProductionRun.VARIANCE_ALERT_PERCENT
+
+
+class ProductionCostRevision(models.Model):
+    run = models.ForeignKey(ProductionRun, on_delete=models.PROTECT, related_name="cost_revisions")
+    changed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    changed_at = models.DateTimeField(auto_now_add=True)
+    old_labour_cost = models.DecimalField(max_digits=14, decimal_places=2)
+    new_labour_cost = models.DecimalField(max_digits=14, decimal_places=2)
+    old_power_cost = models.DecimalField(max_digits=14, decimal_places=2)
+    new_power_cost = models.DecimalField(max_digits=14, decimal_places=2)
+
+    class Meta:
+        ordering = ["-changed_at"]
+
+
+class ImmutableRecordQuerySet(models.QuerySet):
+    def bulk_create(self, objs, batch_size=None, ignore_conflicts=False, update_conflicts=False, update_fields=None, unique_fields=None):
+        raise ValidationError("Issued records must be created through their posting service.")
+
+    def update(self, **kwargs):
+        raise ValidationError("Issued records cannot be updated in bulk.")
+
+    def delete(self):
+        raise ValidationError("Issued records cannot be deleted in bulk.")
+
+    def bulk_update(self, objs, fields, batch_size=None):
+        raise ValidationError("Issued records cannot be updated in bulk.")
 
 
 class Invoice(models.Model):
@@ -289,14 +400,43 @@ class Invoice(models.Model):
     order = models.ForeignKey(Order, on_delete=models.PROTECT, related_name="invoices")
     amount = models.DecimalField(max_digits=14, decimal_places=2)
     due_date = models.DateField(null=True, blank=True)
+    supplier_name = models.CharField(max_length=200, blank=True)
+    supplier_address = models.TextField(blank=True)
+    supplier_gstin = models.CharField(max_length=15, blank=True)
+    supplier_state = models.CharField(max_length=50, blank=True)
+    supplier_state_code = models.CharField(max_length=2, blank=True)
+    customer_name = models.CharField(max_length=200, blank=True)
+    customer_address = models.TextField(blank=True)
+    customer_gstin = models.CharField(max_length=15, blank=True)
+    customer_state = models.CharField(max_length=50, blank=True)
+    customer_state_code = models.CharField(max_length=2, blank=True)
+    place_of_supply_state = models.CharField(max_length=50, blank=True)
+    place_of_supply_code = models.CharField(max_length=2, blank=True)
+    taxable_value = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    cgst_amount = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    sgst_amount = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    igst_amount = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    objects = ImmutableRecordQuerySet.as_manager()
 
     class Meta:
-        constraints = [models.CheckConstraint(condition=models.Q(amount__gte=0), name="nonnegative_invoice_amount")]
+        constraints = [
+            models.CheckConstraint(condition=models.Q(amount__gte=0), name="nonnegative_invoice_amount"),
+            models.UniqueConstraint(fields=["order"], name="one_invoice_per_order"),
+        ]
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValidationError("Issued invoices are immutable; use a separate correction document.")
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("Issued invoices cannot be deleted.")
 
     @property
     def balance_due(self):
         paid = self.payments.aggregate(total=Coalesce(Sum("amount"), Value(Decimal("0")), output_field=DecimalField(max_digits=14, decimal_places=2)))["total"]
-        return self.amount - paid
+        credit = self.credit_note.amount if hasattr(self, "credit_note") else Decimal("0.00")
+        return self.amount - paid - credit
 
     def __str__(self):
         return self.number
@@ -308,12 +448,128 @@ class Payment(models.Model):
     date = models.DateField()
     amount = models.DecimalField(max_digits=14, decimal_places=2)
     method = models.CharField(max_length=60, blank=True)
+    objects = ImmutableRecordQuerySet.as_manager()
 
     class Meta:
         constraints = [models.CheckConstraint(condition=models.Q(amount__gt=0), name="positive_payment_amount")]
 
+    def clean(self):
+        if self.invoice_id:
+            if self.date is not None and self.date < self.invoice.date:
+                raise ValidationError({"date": "Payment date cannot precede the invoice date."})
+            if self.amount is not None and self.amount > self.invoice.balance_due:
+                raise ValidationError({"amount": "Payment exceeds the invoice outstanding balance."})
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValidationError("Recorded payments are immutable; enter a correcting payment separately.")
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("Recorded payments cannot be deleted.")
+
     def __str__(self):
         return self.reference
+
+
+class InvoiceLine(models.Model):
+    invoice = models.ForeignKey(Invoice, on_delete=models.PROTECT, related_name="lines")
+    line_number = models.PositiveIntegerField()
+    description = models.CharField(max_length=200)
+    hsn_code = models.CharField(max_length=20)
+    quantity = models.DecimalField(max_digits=18, decimal_places=6)
+    unit = models.CharField(max_length=6, choices=Unit.choices)
+    unit_price = models.DecimalField(max_digits=12, decimal_places=2)
+    taxable_value = models.DecimalField(max_digits=14, decimal_places=2)
+    gst_rate = models.DecimalField(max_digits=5, decimal_places=2)
+    cgst_amount = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    sgst_amount = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    igst_amount = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    objects = ImmutableRecordQuerySet.as_manager()
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["invoice", "line_number"], name="unique_invoice_line")]
+        ordering = ["line_number"]
+
+    @property
+    def total(self):
+        return self.taxable_value + self.cgst_amount + self.sgst_amount + self.igst_amount
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValidationError("Issued invoice lines are immutable.")
+        if not getattr(self, "_allow_snapshot_create", False):
+            raise ValidationError("Invoice lines must be created when the invoice is issued.")
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("Issued invoice lines cannot be deleted.")
+
+
+class InvoiceSequence(models.Model):
+    financial_year = models.CharField(max_length=7, unique=True)
+    next_number = models.PositiveIntegerField(default=1)
+
+
+class CreditNoteSequence(models.Model):
+    financial_year = models.CharField(max_length=7, unique=True)
+    next_number = models.PositiveIntegerField(default=1)
+
+
+class CreditNote(models.Model):
+    """Full invoice reversal; stock returns require a separate stock document."""
+
+    invoice = models.OneToOneField(Invoice, on_delete=models.PROTECT, related_name="credit_note")
+    number = models.CharField(max_length=60, unique=True)
+    date = models.DateField()
+    reason = models.TextField()
+    issued_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True)
+    issued_at = models.DateTimeField(auto_now_add=True)
+    taxable_value = models.DecimalField(max_digits=14, decimal_places=2)
+    cgst_amount = models.DecimalField(max_digits=14, decimal_places=2)
+    sgst_amount = models.DecimalField(max_digits=14, decimal_places=2)
+    igst_amount = models.DecimalField(max_digits=14, decimal_places=2)
+    amount = models.DecimalField(max_digits=14, decimal_places=2)
+    objects = ImmutableRecordQuerySet.as_manager()
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValidationError("Issued credit notes are immutable.")
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("Issued credit notes cannot be deleted.")
+
+    def __str__(self):
+        return self.number
+
+
+class AuditEvent(models.Model):
+    """Append-only application event for invoice and production changes."""
+
+    invoice = models.ForeignKey(Invoice, on_delete=models.PROTECT, null=True, blank=True, related_name="audit_events")
+    run = models.ForeignKey(ProductionRun, on_delete=models.PROTECT, null=True, blank=True, related_name="audit_events")
+    actor = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True)
+    action = models.CharField(max_length=40)
+    created_at = models.DateTimeField(auto_now_add=True)
+    details = models.JSONField(default=dict)
+    objects = ImmutableRecordQuerySet.as_manager()
+
+    class Meta:
+        ordering = ["-created_at", "-pk"]
+        constraints = [models.CheckConstraint(
+            condition=(models.Q(invoice__isnull=False, run__isnull=True) | models.Q(invoice__isnull=True, run__isnull=False)),
+            name="audit_event_one_document",
+        )]
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValidationError("Audit events are immutable.")
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("Audit events cannot be deleted.")
 
 
 class StockAdjustment(models.Model):

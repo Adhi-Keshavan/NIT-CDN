@@ -1,0 +1,12 @@
+{% extends "erp/business_base.html" %}
+{% load erp_format %}
+{% block title %}Issue invoice{% endblock %}
+{% block content %}
+<h1>Issue invoice for {{ order.reference }}</h1><p>{{ order.customer.name }} · {{ order.get_status_display }}</p>
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+{% if not company %}<p><a class="button" href="{% url 'company_profile' %}">Set company details</a></p>{% endif %}
+{% if preview %}<div class="card"><h2>Tax preview</h2><div class="table-wrap"><table><thead><tr><th>Product</th><th>HSN</th><th>Quantity</th><th>Rate</th><th>Taxable</th><th>GST</th></tr></thead><tbody>
+{% for line in preview.0 %}<tr><td>{{ line.description }}</td><td>{{ line.hsn_code }}</td><td>{{ line.quantity|quantity }} {{ line.unit|unit_label }}</td><td>₹{{ line.unit_price }}</td><td>₹{{ line.taxable_value }}</td><td>{{ line.gst_rate }}%</td></tr>{% endfor %}
+</tbody></table></div><p>Taxable ₹{{ preview.1.taxable_value }} · CGST ₹{{ preview.1.cgst_amount }} · SGST ₹{{ preview.1.sgst_amount }} · IGST ₹{{ preview.1.igst_amount }}</p><p><strong>Total ₹{{ preview.1.amount }}</strong></p></div>{% endif %}
+<form method="post" class="card">{% csrf_token %}{{ form.as_p }}<p class="muted">Confirm the place of supply before issuing. The invoice values become fixed when issued.</p><button type="submit">Issue invoice</button></form>
+{% endblock %}

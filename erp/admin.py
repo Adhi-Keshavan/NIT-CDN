@@ -5,8 +5,8 @@ from django.core.exceptions import ValidationError
 from .ledger import approve_order, complete_production_run, dispatch_order, post_adjustment, receive_purchase
 
 from .models import (
-    BOMLine, Customer, Invoice, Item, Material, Order, OrderLine,
-    Payment, Product, ProductionConsumption, ProductionRun, Purchase,
+    AuditEvent, BOMLine, CreditNote, Customer, Invoice, InvoiceLine, Item, Material, Order, OrderLine,
+    Payment, Product, ProductionConsumption, ProductionCostRevision, ProductionRun, Purchase,
     StockAdjustment, StockAdjustmentLine, StockMovement,
 )
 
@@ -41,6 +41,17 @@ class OrderLineInline(PostedInlineMixin, admin.TabularInline):
     model = OrderLine
     extra = 0
 
+    def has_add_permission(self, request, obj=None):
+        return (obj is None or obj.status == Order.Status.DRAFT) and super().has_add_permission(request, obj)
+
+    def has_delete_permission(self, request, obj=None):
+        return (obj is None or obj.status == Order.Status.DRAFT) and super().has_delete_permission(request, obj)
+
+    def get_readonly_fields(self, request, obj=None):
+        if obj and obj.status != Order.Status.DRAFT:
+            return tuple(field.name for field in self.model._meta.fields)
+        return super().get_readonly_fields(request, obj)
+
 
 class ProductionConsumptionInline(PostedInlineMixin, admin.TabularInline):
     model = ProductionConsumption
@@ -68,12 +79,20 @@ def post_selected(model_admin, request, queryset, action):
 class OrderAdmin(PostedReadOnlyMixin, admin.ModelAdmin):
     list_display = ("reference", "customer", "date", "status")
     inlines = [OrderLineInline]
-    readonly_fields = ("status",)
+    readonly_fields = ("status", "rejection_reason", "reviewed_by", "reviewed_at")
     actions = ("approve_selected", "dispatch_selected")
+
+    def get_readonly_fields(self, request, obj=None):
+        if obj and obj.status != Order.Status.DRAFT:
+            return tuple(field.name for field in self.model._meta.fields)
+        return super().get_readonly_fields(request, obj)
+
+    def has_delete_permission(self, request, obj=None):
+        return (obj is None or obj.status == Order.Status.DRAFT) and super().has_delete_permission(request, obj)
 
     @admin.action(description="Approve selected orders after stock check")
     def approve_selected(self, request, queryset):
-        post_selected(self, request, queryset, approve_order)
+        post_selected(self, request, queryset, lambda order: approve_order(order, reviewed_by=request.user))
 
     @admin.action(description="Dispatch selected orders and post stock")
     def dispatch_selected(self, request, queryset):
@@ -93,14 +112,14 @@ class PurchaseAdmin(PostedReadOnlyMixin, admin.ModelAdmin):
 
 @admin.register(ProductionRun)
 class ProductionRunAdmin(PostedReadOnlyMixin, admin.ModelAdmin):
-    list_display = ("reference", "product", "planned_quantity", "completed_quantity", "date", "status")
+    list_display = ("reference", "product", "planned_quantity", "completed_quantity", "date", "status", "material_cost", "cost_per_packet", "yield_variance_alert")
     readonly_fields = ("status",)
     inlines = [ProductionConsumptionInline]
     actions = ("complete_selected",)
 
     @admin.action(description="Complete selected runs and post stock")
     def complete_selected(self, request, queryset):
-        post_selected(self, request, queryset, complete_production_run)
+        post_selected(self, request, queryset, lambda run: complete_production_run(run, posted_by=request.user))
 
 
 @admin.register(StockAdjustment)
@@ -133,5 +152,55 @@ class StockMovementAdmin(admin.ModelAdmin):
         return False
 
 
-for model in (Customer, Item, Material, Invoice, Payment):
+@admin.register(ProductionCostRevision)
+class ProductionCostRevisionAdmin(admin.ModelAdmin):
+    list_display = ("run", "changed_by", "changed_at", "old_labour_cost", "new_labour_cost", "old_power_cost", "new_power_cost")
+
+    def get_readonly_fields(self, request, obj=None):
+        return tuple(field.name for field in self.model._meta.fields)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+class IssuedDocumentAdmin(admin.ModelAdmin):
+    def get_readonly_fields(self, request, obj=None):
+        return tuple(field.name for field in self.model._meta.fields)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(Invoice)
+class InvoiceAdmin(IssuedDocumentAdmin):
+    list_display = ("number", "date", "order", "taxable_value", "amount", "balance_due")
+
+
+@admin.register(InvoiceLine)
+class InvoiceLineAdmin(IssuedDocumentAdmin):
+    list_display = ("invoice", "line_number", "description", "hsn_code", "taxable_value")
+
+
+@admin.register(Payment)
+class PaymentAdmin(IssuedDocumentAdmin):
+    list_display = ("reference", "invoice", "date", "amount")
+
+
+@admin.register(CreditNote)
+class CreditNoteAdmin(IssuedDocumentAdmin):
+    list_display = ("number", "date", "invoice", "amount", "issued_by", "issued_at")
+
+
+@admin.register(AuditEvent)
+class AuditEventAdmin(IssuedDocumentAdmin):
+    list_display = ("created_at", "action", "actor", "invoice", "run")
+
+
+for model in (Customer, Item, Material):
     admin.site.register(model)

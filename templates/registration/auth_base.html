@@ -1,0 +1,17 @@
+<!doctype html><html lang="en"><head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Account{% endblock %} · NIT-CDN</title>
+  {% include "shared/app_styles.html" %}
+</head><body class="auth-page">
+<div class="auth-shell">
+  <aside class="auth-side">
+    <a class="brand" href="{% url 'login' %}"><span class="brand-mark" aria-hidden="true">N</span><span>NIT-CDN<small>Order to audit</small></span></a>
+    <div><span class="eyebrow">One connected workspace</span><h2>{% block side_title %}From order to audit, in one place.{% endblock %}</h2>
+      {% block side_content %}<p>Sales, production, and management each get the tools they need. Every stock change remains traceable.</p>
+      <ul><li>Capture orders and review stock</li><li>Post production and purchases</li><li>Issue invoices and track payments</li></ul>{% endblock %}
+    </div>
+    <span class="auth-steps">Sales · Production · Management</span>
+  </aside>
+  <main class="auth-panel" id="content">{% block panel %}{% endblock %}</main>
+</div>
+</body></html>

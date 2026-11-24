@@ -1,0 +1,6 @@
+{% extends "erp/business_base.html" %}
+{% block title %}Company invoice details{% endblock %}
+{% block content %}
+<h1>Company invoice details</h1><p class="muted">Use your actual registered details. These values are copied into each invoice when it is issued.</p>
+<form method="post" class="card">{% csrf_token %}{{ form.as_p }}<button type="submit">Save company details</button></form>
+{% endblock %}

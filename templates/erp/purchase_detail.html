@@ -1,0 +1,9 @@
+{% extends "erp/base.html" %}
+{% load erp_format %}
+{% block title %}Purchase {{ purchase.reference }}{% endblock %}
+{% block content %}
+<h1>Purchase {{ purchase.reference }}</h1>
+<div class="card"><p><strong>Status:</strong> {{ purchase.get_status_display }}</p><p><strong>Supplier:</strong> {{ purchase.supplier_name }}</p><p><strong>Material:</strong> {{ purchase.material.item.name }}</p><p><strong>Received:</strong> {{ purchase.quantity|quantity }} {{ purchase.unit|unit_label }} at ₹{{ purchase.unit_cost }} per {{ purchase.unit|unit_label }}</p><p><strong>Date:</strong> {{ purchase.date }}</p></div>
+<div class="grid"><div class="card"><h2>Ledger receipt</h2>{% if movement %}<p>+{{ movement.quantity|quantity }} {{ movement.unit|unit_label }} · {{ movement.source_reference }}</p>{% else %}<p>Not posted.</p>{% endif %}</div><div class="card"><h2>Current material stock</h2><p>{{ balance|quantity }} {{ purchase.material.item.base_unit|unit_label }}</p><p>Moving weighted average: ₹{{ weighted_rate|floatformat:3 }} per {{ purchase.material.item.base_unit|unit_label }}</p></div></div>
+<p><a href="{% url 'purchase_list' %}">All purchases</a></p>
+{% endblock %}

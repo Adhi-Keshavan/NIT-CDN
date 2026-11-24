@@ -1,0 +1,23 @@
+{% extends "erp/business_base.html" %}
+{% block title %}Access requests{% endblock %}
+{% block content %}
+<div class="section-heading"><div><span class="eyebrow">Admin only</span><h1>Access requests</h1></div><a class="button secondary" href="{% url 'dashboard' %}">Back to overview</a></div>
+<p class="muted">Every signup stays inactive until an admin approves its role.</p>
+<div class="grid">
+{% for access in access_requests %}
+  <article class="card">
+    <span class="chip {{ access.status }}">{{ access.get_status_display }}</span>
+    <h2>{{ access.user.get_full_name|default:access.user.username }}</h2>
+    <p class="muted">{{ access.user.username }} · {{ access.user.email }}</p>
+    <p><strong>Requested role:</strong> {{ access.get_requested_role_display }}<br><small>Submitted {{ access.created_at }}</small></p>
+    {% if access.status == 'pending' %}
+      <div class="actions"><form method="post" action="{% url 'access_request_review' access.pk %}">{% csrf_token %}<button type="submit" name="action" value="approve">Approve {{ access.get_requested_role_display }}</button></form></div>
+      <form method="post" action="{% url 'access_request_review' access.pk %}">{% csrf_token %}
+        <label for="note-{{ access.pk }}">Reason to reject</label><input id="note-{{ access.pk }}" name="note" required maxlength="500">
+        <p><button class="danger" type="submit" name="action" value="reject">Reject request</button></p>
+      </form>
+    {% else %}<p class="muted">Reviewed by {{ access.reviewed_by.username }}{% if access.note %} · {{ access.note }}{% endif %}</p>{% endif %}
+  </article>
+{% empty %}<p>No access requests yet.</p>{% endfor %}
+</div>
+{% endblock %}

@@ -1,0 +1,11 @@
+{% extends "erp/business_base.html" %}
+{% block title %}Sales orders{% endblock %}
+{% block content %}
+<section class="hero"><div><span class="eyebrow">Sales workspace</span><h1>Sales orders</h1><p>Create customer orders and follow their status from submission through dispatch.</p></div><a class="button" href="{% url 'sales_order_new' %}">New order →</a></section>
+<div class="section-heading"><h2>{% if user.role == 'admin' %}Recent orders{% else %}Your orders{% endif %}</h2></div>
+<div class="grid">{% for order in orders %}<div class="card">
+  <h2><a href="{% url 'sales_order_detail' order.pk %}">{{ order.reference }}</a></h2>
+  <p>{{ order.customer.name }} · {{ order.date }}</p><p><strong>{{ order.get_status_display }}</strong></p>
+  {% if order.rejection_reason %}<p class="shortage">{{ order.rejection_reason }}</p>{% endif %}
+</div>{% empty %}<p>No orders yet.</p>{% endfor %}</div>
+{% endblock %}

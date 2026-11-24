@@ -1,0 +1,6 @@
+{% extends "erp/business_base.html" %}
+{% block title %}Record payment{% endblock %}
+{% block content %}
+<h1>Record payment</h1><p>Invoice {{ invoice.number }} · {{ invoice.customer_name }} · outstanding <strong>₹{{ invoice.balance_due }}</strong></p>
+<form method="post" class="card">{% csrf_token %}{{ form.as_p }}<button type="submit">Save payment</button></form>
+{% endblock %}

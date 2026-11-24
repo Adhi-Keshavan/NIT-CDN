@@ -1,0 +1,12 @@
+{% extends "erp/business_base.html" %}
+{% load erp_format %}
+{% block title %}Order {{ order.reference }}{% endblock %}
+{% block content %}
+<h1>{{ order.reference }}</h1><p>{{ order.customer.name }} · {{ order.date }} · <strong>{{ order.get_status_display }}</strong></p>
+{% if order.rejection_reason %}<p class="shortage">Reason: {{ order.rejection_reason }}</p>{% endif %}
+<div class="card"><h2>Items</h2><div class="table-wrap"><table><thead><tr><th>Product</th><th>Quantity</th><th>Price per unit</th></tr></thead><tbody>
+{% for line in lines %}<tr><td>{{ line.product.item.name }}</td><td>{{ line.quantity|quantity }} {{ line.unit|unit_label }}</td><td>₹{{ line.unit_price }}</td></tr>{% endfor %}
+</tbody></table></div></div>
+{% if invoice %}<div class="card"><h2>Issued invoice</h2><p><a href="{% url 'invoice_detail' invoice.pk %}">{{ invoice.number }}</a> · ₹{{ invoice.amount }} · outstanding ₹{{ invoice.balance_due }}</p><a class="button" href="{% url 'invoice_pdf' invoice.pk %}" target="_blank" rel="noopener">Open PDF to download or share</a></div>{% endif %}
+{% if user.role == 'admin' %}<p><a href="{% url 'order_review' order.pk %}">Admin review</a></p>{% endif %}
+{% endblock %}

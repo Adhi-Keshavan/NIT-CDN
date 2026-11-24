@@ -1,0 +1,7 @@
+{% extends "erp/base.html" %}
+{% block title %}Receive purchase{% endblock %}
+{% block content %}
+<h1>Receive purchase</h1>
+<p>Enter the rate per unit shown in the quantity field. Saving posts one linked receipt to the stock ledger.</p>
+<div class="card"><form method="post">{% csrf_token %}{{ form.as_p }}<button type="submit">Save and receive</button></form></div>
+{% endblock %}

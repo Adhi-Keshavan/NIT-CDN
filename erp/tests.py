@@ -12,10 +12,12 @@ from django.db import IntegrityError, transaction
 from django.test import TestCase
 from django.urls import reverse
 
-from .ledger import approve_order, complete_production_run, dispatch_order, post_adjustment, receive_purchase, stock_shortages_for_order
+from .costing import weighted_average_material_cost
+from .billing import financial_year, issue_invoice
+from .ledger import approve_order, complete_production_run, dispatch_order, post_adjustment, receive_purchase, stock_shortages_for_order, update_run_overheads
 from .models import (
-    BOMLine, Customer, Item, Material, Order, OrderLine, Product,
-    ProductionConsumption, ProductionRun, Purchase, StockAdjustment, StockAdjustmentLine, StockMovement,
+    BOMLine, CompanyProfile, Customer, Invoice, Item, Material, Order, OrderLine, Product,
+    ProductionConsumption, ProductionCostRevision, ProductionRun, Purchase, StockAdjustment, StockAdjustmentLine, StockMovement,
 )
 from .units import Unit, convert_quantity
 
@@ -275,6 +277,16 @@ class PostingTests(TestCase):
             quantity=Decimal("150"), unit=Unit.PACKET, unit_price=Decimal("50"),
         )
         approve_order(retailer_order)
+        company = CompanyProfile.objects.create(
+            pk=1, name="Test Foods", address="Chennai", state="Tamil Nadu",
+            state_code="33", gstin="33ABCDE1234F1Z5",
+        )
+        product.hsn_code = "210690"
+        product.save(update_fields=["hsn_code"])
+        issue_invoice(
+            retailer_order, company=company, issue_date=date(2026, 11, 3),
+            place_of_supply_state="Tamil Nadu", place_of_supply_code="33",
+        )
         dispatch_order(retailer_order)
         dispatch_order(retailer_order)
         self.assertEqual(retailer_order.stock_movements.count(), 1)
@@ -313,3 +325,145 @@ class PostingTests(TestCase):
         dispatch_movement.quantity = Decimal("-149")
         with self.assertRaises(ValidationError):
             dispatch_movement.save()
+
+
+class DayTwoProductionTests(TestCase):
+    def setUp(self):
+        call_command("seed_benchmark", file=Path(__file__).resolve().parent.parent / "data" / "benchmark.json")
+        self.product = Product.objects.get(item__sku="MURUKKU-200G")
+        self.supervisor = get_user_model().objects.get(username="production_supervisor")
+
+    def balance(self, sku):
+        return StockMovement.objects.balance_for(Item.objects.get(sku=sku))
+
+    def purchase_flour(self):
+        purchase = Purchase.objects.create(
+            reference="PUR-DAY2-60", date=date(2026, 11, 2), supplier_name="Flour supplier",
+            material=Material.objects.get(item__sku="MAT-FLOUR"),
+            quantity=Decimal("60"), unit=Unit.KILOGRAM, unit_cost=Decimal("45"),
+        )
+        receive_purchase(purchase)
+        return purchase
+
+    def run_payload(self, **changes):
+        quantities = {
+            "MAT-FLOUR": ("40", "0"), "MAT-OIL": ("10.5", "0"),
+            "MAT-SPICE": ("1.2", "0"), "PKG-POUCH-200G": ("194", "6"),
+            "PKG-CARTON-20": ("9", "0"),
+        }
+        payload = {
+            "product": self.product.pk, "batches": "1", "reference": "RUN-DAY2",
+            "date": "2026-11-02", "good_output": "188",
+        }
+        for line in self.product.bom_lines.select_related("material__item"):
+            actual, wasted = quantities[line.material.item.sku]
+            payload[f"actual_{line.pk}"] = actual
+            payload[f"wastage_{line.pk}"] = wasted
+        payload.update(changes)
+        return payload
+
+    def test_benchmark_posting_variance_and_weighted_cost(self):
+        purchase = self.purchase_flour()
+        self.assertEqual(self.balance("MAT-FLOUR"), Decimal("160"))
+        self.assertEqual(purchase.stock_movements.get().source_document, purchase)
+        flour = purchase.material
+        self.assertEqual(weighted_average_material_cost(flour), Decimal("43.125"))
+
+        self.client.force_login(self.supervisor)
+        response = self.client.get(reverse("run_new"), {"product": self.product.pk, "batches": 1})
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "40 kg")
+        self.assertContains(response, "10 L")
+        self.assertContains(response, "1.2 kg")
+        self.assertContains(response, "200 packet")
+        response = self.client.post(reverse("run_new"), self.run_payload())
+        self.assertEqual(response.status_code, 302)
+        run = ProductionRun.objects.get(reference="RUN-DAY2")
+        self.assertEqual(run.stock_movements.count(), 6)
+        complete_production_run(run)
+        self.assertEqual(run.stock_movements.count(), 6)
+        duplicate = self.client.post(reverse("run_new"), self.run_payload())
+        self.assertEqual(duplicate.status_code, 200)
+        self.assertEqual(ProductionRun.objects.filter(reference="RUN-DAY2").count(), 1)
+        self.assertEqual(run.stock_movements.count(), 6)
+        self.assertEqual(self.balance("MAT-FLOUR"), Decimal("120"))
+        self.assertEqual(self.balance("MAT-OIL"), Decimal("19.5"))
+        self.assertEqual(self.balance("PKG-POUCH-200G"), Decimal("306"))
+        self.assertEqual(self.balance("MURUKKU-200G"), Decimal("238"))
+        self.assertTrue(all(move.source_document.pk == run.pk for move in run.stock_movements.all()))
+
+        self.assertEqual(run.yield_variance_percent, Decimal("-6"))
+        self.assertTrue(run.yield_variance_alert)
+        oil = run.consumptions.get(material__item__sku="MAT-OIL")
+        self.assertEqual(oil.variance_percent, Decimal("5"))
+        self.assertTrue(oil.variance_alert)
+        self.assertEqual(oil.standard_quantity_snapshot, Decimal("10"))
+        oil_bom = self.product.bom_lines.get(material=oil.material)
+        oil_bom.quantity = Decimal("11")
+        oil_bom.save()
+        oil.refresh_from_db()
+        self.assertEqual(oil.variance_percent, Decimal("5"))
+        self.assertEqual(run.consumptions.get(material=flour).unit_cost_snapshot, Decimal("43.125000"))
+        self.assertEqual(run.material_cost, Decimal("4055.00"))
+        self.assertEqual(run.cost_per_packet, Decimal("21.57"))
+
+        response = self.client.post(reverse("run_detail", args=[run.pk]), {
+            "labour_cost": "1200", "power_cost": "600",
+        })
+        self.assertEqual(response.status_code, 302)
+        run.refresh_from_db()
+        self.assertEqual(run.total_cost, Decimal("5855.00"))
+        self.assertEqual(run.cost_per_packet, Decimal("31.14"))
+        self.assertEqual(run.margin_per_packet, Decimal("18.86"))
+        self.assertEqual(ProductionCostRevision.objects.get(run=run).changed_by, self.supervisor)
+        update_run_overheads(run, labour_cost=Decimal("1200"), power_cost=Decimal("600"), changed_by=self.supervisor)
+        self.assertEqual(ProductionCostRevision.objects.filter(run=run).count(), 1)
+        self.assertContains(self.client.get(reverse("run_detail", args=[run.pk])), "Over 3% tolerance")
+
+    def test_insufficient_material_rolls_back_run_and_ledger(self):
+        self.client.force_login(self.supervisor)
+        before_movements = StockMovement.objects.count()
+        flour_line = self.product.bom_lines.get(material__item__sku="MAT-FLOUR")
+        response = self.client.post(reverse("run_new"), self.run_payload(**{f"actual_{flour_line.pk}": "101"}))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Insufficient")
+        self.assertFalse(ProductionRun.objects.filter(reference="RUN-DAY2").exists())
+        self.assertEqual(StockMovement.objects.count(), before_movements)
+
+    def test_mixed_issue_units_convert_to_base_stock_and_cost(self):
+        self.purchase_flour()
+        run = ProductionRun.objects.create(
+            reference="RUN-MIXED-UNITS", date=date(2026, 11, 2), product=self.product,
+            planned_quantity=Decimal("200"), completed_quantity=Decimal("188"), unit=Unit.PACKET,
+        )
+        actuals = {
+            "MAT-FLOUR": ("40000", Unit.GRAM),
+            "MAT-OIL": ("10500", Unit.MILLILITRE),
+            "MAT-SPICE": ("1200", Unit.GRAM),
+            "PKG-POUCH-200G": ("194", Unit.PIECE),
+            "PKG-CARTON-20": ("9", Unit.PIECE),
+        }
+        for sku, (quantity, unit) in actuals.items():
+            ProductionConsumption.objects.create(
+                run=run, material=Material.objects.get(item__sku=sku),
+                quantity=Decimal(quantity), unit=unit,
+            )
+        complete_production_run(run)
+        self.assertEqual(self.balance("MAT-FLOUR"), Decimal("120"))
+        self.assertEqual(self.balance("MAT-OIL"), Decimal("19.5"))
+        self.assertEqual(run.material_cost, Decimal("4055.00"))
+        self.assertEqual(run.consumptions.get(material__item__sku="MAT-OIL").variance_percent, Decimal("5"))
+
+    def test_supervisor_purchase_form_and_role_access(self):
+        self.client.force_login(self.supervisor)
+        response = self.client.post(reverse("purchase_new"), {
+            "reference": "PUR-DAY2-60", "date": "2026-11-02", "supplier_name": "Flour supplier",
+            "material": Material.objects.get(item__sku="MAT-FLOUR").pk,
+            "quantity": "60", "unit": Unit.KILOGRAM, "unit_cost": "45",
+        })
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(Purchase.objects.get(reference="PUR-DAY2-60").stock_movements.count(), 1)
+        self.assertContains(self.client.get(reverse("stock_summary")), "160")
+        self.client.force_login(get_user_model().objects.get(username="salesman_a"))
+        for url_name in ("production", "purchase_new", "run_new", "stock_summary"):
+            self.assertEqual(self.client.get(reverse(url_name)).status_code, 403)

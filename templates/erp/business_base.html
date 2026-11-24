@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#173c2f">
+  <title>{% block title %}Workspace{% endblock %} · NIT-CDN</title>
+  {% include "shared/app_styles.html" %}
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to content</a>
+<header class="site-header">
+  <div class="header-inner">
+    <a class="brand" href="{% url 'dashboard' %}"><span class="brand-mark" aria-hidden="true">N</span><span>NIT-CDN<small>Order to audit</small></span></a>
+    <button class="menu-toggle" type="button" aria-expanded="false" aria-controls="site-nav">Menu</button>
+    <nav id="site-nav" class="site-nav" aria-label="Main navigation">
+      <a href="{% url 'dashboard' %}">Overview</a>
+      {% if user.role == 'salesman' or user.role == 'admin' %}<a href="{% url 'sales' %}">Sales</a>{% endif %}
+      {% if user.role == 'production' or user.role == 'admin' %}<a href="{% url 'production' %}">Production</a>{% endif %}
+      {% if user.role == 'admin' %}<a href="{% url 'management' %}">Management</a><a href="{% url 'report_index' %}">Reports</a><a href="{% url 'access_requests' %}">People</a><a href="{% url 'admin:index' %}">Admin setup</a>{% endif %}
+    </nav>
+    <div class="header-user"><span class="role-pill">{{ user.get_role_display }}</span><span class="header-username">{{ user.username }}</span>
+      <form method="post" action="{% url 'logout' %}">{% csrf_token %}<button type="submit" class="header-logout">Sign out</button></form>
+    </div>
+  </div>
+</header>
+{% block subnav %}{% endblock %}
+<main id="content" class="page-shell">
+  {% for message in messages %}<div class="message {% if message.tags %}message-{{ message.tags }}{% endif %}" role="status">{{ message }}</div>{% endfor %}
+  {% block content %}{% endblock %}
+</main>
+<script>
+  const menuButton = document.querySelector('.menu-toggle');
+  const siteNav = document.getElementById('site-nav');
+  menuButton?.addEventListener('click', () => {
+    const open = menuButton.getAttribute('aria-expanded') === 'true';
+    menuButton.setAttribute('aria-expanded', String(!open));
+    siteNav.classList.toggle('open', !open);
+  });
+</script>
+</body></html>

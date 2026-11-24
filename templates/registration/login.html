@@ -1,6 +1,16 @@
-<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><title>Sign in</title></head>
-<body><h1>Sign in</h1>
-{% if form.errors %}<p>Invalid username or password.</p>{% endif %}
-<form method="post">{% csrf_token %}{{ form.as_p }}<button type="submit">Sign in</button></form>
-</body></html>
+{% extends "registration/auth_base.html" %}
+{% block title %}Sign in{% endblock %}
+{% block panel %}
+<span class="eyebrow">Welcome back</span><h1>Sign in</h1>
+<p class="muted">Use your NIT-CDN account to open your role workspace.</p>
+{% if form.errors %}<div class="message message-error" role="alert">The username or password is incorrect, or your account is still awaiting approval.</div>{% endif %}
+<form method="post">{% csrf_token %}
+  {% if next %}<input type="hidden" name="next" value="{{ next }}">{% endif %}
+  <label for="{{ form.username.id_for_label }}">Username</label>{{ form.username }}
+  <label for="{{ form.password.id_for_label }}">Password</label>{{ form.password }}
+  <p><label><input type="checkbox" id="show-password"> Show password</label></p>
+  <button class="button" type="submit">Sign in</button>
+</form>
+<p class="auth-link">New here? <a href="{% url 'signup' %}">Request an account</a></p>
+<script>document.getElementById('show-password').addEventListener('change', e => { document.getElementById('{{ form.password.id_for_label }}').type = e.target.checked ? 'text' : 'password'; });</script>
+{% endblock %}

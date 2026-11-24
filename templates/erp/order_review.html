@@ -1,0 +1,23 @@
+{% extends "erp/business_base.html" %}
+{% load erp_format %}
+{% block title %}Review {{ order.reference }}{% endblock %}
+{% block content %}
+<h1>Review {{ order.reference }}</h1>
+<p>{{ order.customer.name }} · {{ order.salesperson.username }} · {{ order.date }} · <strong>{{ order.get_status_display }}</strong></p>
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+{% if order.rejection_reason %}<p class="shortage">Rejected: {{ order.rejection_reason }}</p>{% endif %}
+<div class="card"><h2>Availability</h2><div class="table-wrap"><table><thead><tr><th>Product</th><th>Ordered</th><th>Price</th><th>Available now</th><th>Shortage</th></tr></thead><tbody>
+{% for row in rows %}<tr><td>{{ row.line.product.item.name }}</td><td>{{ row.line.quantity|quantity }} {{ row.line.unit|unit_label }}</td><td>₹{{ row.line.unit_price }}</td><td>{{ row.available|quantity }} {{ row.line.product.item.base_unit|unit_label }}</td><td class="{% if row.shortage %}shortage{% endif %}">{{ row.shortage|quantity }}</td></tr>{% endfor %}
+</tbody></table></div></div>
+{% if order.status == 'draft' %}
+  <div class="actions"><a class="button secondary" href="{% url 'order_edit' order.pk %}">Edit before approval</a>
+    {% if not shortages %}<form method="post">{% csrf_token %}<button name="action" value="approve">Approve order</button></form>{% else %}<strong class="shortage">Insufficient stock; approval blocked.</strong>{% endif %}
+  </div>
+  <div class="card"><h2>Reject order</h2><form method="post">{% csrf_token %}<label for="reason">Reason</label><textarea id="reason" name="reason" required></textarea><p><button class="danger" name="action" value="reject">Reject order</button></p></form></div>
+{% elif order.status == 'confirmed' %}
+  {% if invoice %}<p><a class="button" href="{% url 'invoice_detail' invoice.pk %}">View invoice</a></p><form method="post">{% csrf_token %}<button name="action" value="dispatch">Dispatch and post stock</button></form>
+  {% else %}<p><a class="button" href="{% url 'invoice_issue' order.pk %}">Issue GST invoice</a></p>{% endif %}
+{% elif order.status == 'shipped' and invoice %}
+  <p><a class="button" href="{% url 'invoice_detail' invoice.pk %}">View invoice and PDF</a></p>
+{% endif %}
+{% endblock %}

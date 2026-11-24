@@ -1,0 +1,7 @@
+{% extends "registration/auth_base.html" %}
+{% block title %}Request sent{% endblock %}
+{% block panel %}
+<span class="eyebrow">Request received</span><h1>Thanks for signing up.</h1>
+<p>Your account request is waiting for an admin to approve the role you selected. You can sign in after approval.</p>
+<p><a class="button" href="{% url 'login' %}">Back to sign in</a></p>
+{% endblock %}

@@ -1,0 +1,32 @@
+{% extends "erp/business_base.html" %}
+{% block title %}{% if editing %}Edit order{% else %}New order{% endif %}{% endblock %}
+{% block content %}
+<h1>{% if editing %}Edit {{ order.reference }}{% else %}New sales order{% endif %}</h1>
+<p class="muted">Choose a customer and enter quantities. Prices come from the product master when you submit.</p>
+<form method="post" class="card">{% csrf_token %}
+  {{ form.non_field_errors }}{{ form.customer.label_tag }}{{ form.customer }}{{ form.customer.errors }}
+  <h2>Products</h2>{{ formset.management_form }}{{ formset.non_form_errors }}
+  <div class="order-lines" id="order-lines">{% for line in formset %}<div class="line-card">
+    <strong>Line {{ forloop.counter }}</strong>{{ line.id }}
+    {{ line.product.label_tag }}{{ line.product }}{{ line.product.errors }}
+    {{ line.quantity.label_tag }}{{ line.quantity }}{{ line.quantity.errors }}
+    {% if line.DELETE %}<label>{{ line.DELETE }} Remove this line</label>{% endif %}
+  </div>{% endfor %}</div>
+  <template id="empty-line"><div class="line-card">
+    <strong>New line</strong>{{ formset.empty_form.product.label_tag }}{{ formset.empty_form.product }}
+    {{ formset.empty_form.quantity.label_tag }}{{ formset.empty_form.quantity }}
+    <label>{{ formset.empty_form.DELETE }} Remove this line</label>
+  </div></template>
+  <p><button type="button" class="secondary" id="add-line">Add another product</button></p>
+  <p><button type="submit">{% if editing %}Save draft changes{% else %}Submit for review{% endif %}</button></p>
+</form>
+<script>
+  document.getElementById("add-line").addEventListener("click", () => {
+    const total = document.getElementById("id_lines-TOTAL_FORMS");
+    const index = Number(total.value);
+    document.getElementById("order-lines").insertAdjacentHTML("beforeend",
+      document.getElementById("empty-line").innerHTML.replaceAll("__prefix__", index));
+    total.value = index + 1;
+  });
+</script>
+{% endblock %}

@@ -1,0 +1,9 @@
+{% extends "erp/base.html" %}
+{% load erp_format %}
+{% block title %}Purchases{% endblock %}
+{% block content %}
+<h1>Purchases</h1><p><a class="button" href="{% url 'purchase_new' %}">Receive purchase</a></p>
+<div class="card table-wrap"><table><thead><tr><th>Reference</th><th>Date</th><th>Material</th><th>Quantity</th><th>Rate</th><th>Status</th></tr></thead><tbody>
+{% for purchase in purchases %}<tr><td><a href="{% url 'purchase_detail' purchase.pk %}">{{ purchase.reference }}</a></td><td>{{ purchase.date }}</td><td>{{ purchase.material.item.name }}</td><td>{{ purchase.quantity|quantity }} {{ purchase.unit|unit_label }}</td><td>₹{{ purchase.unit_cost }}</td><td>{{ purchase.get_status_display }}</td></tr>{% empty %}<tr><td colspan="6">No purchases yet.</td></tr>{% endfor %}
+</tbody></table></div>
+{% endblock %}
