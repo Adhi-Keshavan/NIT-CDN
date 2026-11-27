@@ -8,7 +8,7 @@ NIT-CDN is a Django-based ERP application that connects customer orders, purchas
 
 ## Live Demo
 
-- **Live Application:** [Add your Render deployment URL](https://nit-cdn-demo.onrender.com)
+- **Live Application:** [Render URL](https://nit-cdn-demo.onrender.com)
 - **GitHub Repository:** [NIT-CDN](https://github.com/Adhi-Keshavan/NIT-CDN.git)
 
 ---
