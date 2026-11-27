@@ -40,5 +40,6 @@ urlpatterns = [
     path("credit-notes/<int:pk>/", order_views.credit_note_detail, name="credit_note_detail"),
     path("credit-notes/<int:pk>/pdf/", order_views.credit_note_pdf, name="credit_note_pdf"),
     path("reports/", report_views.report_index, name="report_index"),
+    path("reports/visualizations/", report_views.report_visualizations, name="report_visualizations"),
     path("reports/<slug:kind>/", report_views.report_detail, name="report_detail"),
 ]

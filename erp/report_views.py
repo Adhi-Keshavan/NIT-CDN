@@ -9,6 +9,7 @@ from xml.sax.saxutils import escape
 from django import forms
 from django.http import Http404, HttpResponse
 from django.shortcuts import render
+from django.urls import reverse
 from django.utils import timezone
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A3, A4, landscape
@@ -19,6 +20,7 @@ from accounts.models import User
 from accounts.views import roles_required
 
 from .models import Item
+from .charts import report_charts
 from .reports import REPORTS, build_report
 
 
@@ -60,7 +62,42 @@ def _pdf(title, columns, rows, start, end):
 
 @roles_required(User.Role.ADMIN)
 def report_index(request):
-    return render(request, "erp/report_index.html", {"reports": REPORTS})
+    today = timezone.localdate()
+    initial = {"start": date(today.year, today.month, 1), "end": today}
+    form = ReportFilterForm(request.GET if request.GET else initial)
+    report_links = []
+    query = ""
+    visualization_url = ""
+    if form.is_valid():
+        start, end, item = (form.cleaned_data[key] for key in ("start", "end", "item"))
+        query = urlencode({"start": start.isoformat(), "end": end.isoformat(), **({"item": item.pk} if item else {})})
+        visualization_url = f"{reverse('report_visualizations')}?{query}"
+        for key, (title, _) in REPORTS.items():
+            report_links.append({
+                "key": key, "title": title,
+                "url": f"{reverse('report_detail', args=[key])}?{query}",
+            })
+    return render(request, "erp/report_index.html", {
+        "reports": REPORTS, "form": form, "report_links": report_links,
+        "visualization_url": visualization_url,
+    })
+
+
+@roles_required(User.Role.ADMIN)
+def report_visualizations(request):
+    today = timezone.localdate()
+    initial = {"start": date(today.year, today.month, 1), "end": today}
+    form = ReportFilterForm(request.GET if request.GET else initial)
+    charts = []
+    if form.is_valid():
+        start, end, item = (form.cleaned_data[key] for key in ("start", "end", "item"))
+        for kind in REPORTS:
+            if kind == "ledger" and not item:
+                rows = []
+            else:
+                _, _, rows = build_report(kind, start, end, item=item)
+            charts.extend(report_charts(kind, rows, item_selected=bool(item)))
+    return render(request, "erp/report_visualizations.html", {"form": form, "charts": charts})
 
 
 @roles_required(User.Role.ADMIN)
@@ -72,10 +109,12 @@ def report_detail(request, kind):
     form = ReportFilterForm(request.GET if request.GET else initial)
     title, columns = REPORTS[kind]
     rows = []
+    charts = []
     export_query = ""
     if form.is_valid():
         start, end, item = (form.cleaned_data[key] for key in ("start", "end", "item"))
         title, columns, rows = build_report(kind, start, end, item=item)
+        charts = [] if kind == "collections" else report_charts(kind, rows, item_selected=bool(item))
         export_query = urlencode({"start": start.isoformat(), "end": end.isoformat(), **({"item": item.pk} if item else {})})
         output_format = request.GET.get("format")
         if output_format == "csv":
@@ -94,4 +133,5 @@ def report_detail(request, kind):
     return render(request, "erp/report_detail.html", {
         "kind": kind, "title": title, "columns": columns, "rows": rows, "form": form,
         "show_item": kind in {"stock", "ledger"}, "export_query": export_query,
+        "charts": charts,
     })

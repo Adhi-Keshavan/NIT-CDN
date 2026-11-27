@@ -1,0 +1,13 @@
+{% extends "erp/business_base.html" %}
+{% block title %}Report visualizations{% endblock %}
+{% block content %}
+<p><a href="{% url 'report_index' %}">← All reports</a></p>
+<section class="hero"><div><span class="eyebrow">Admin reports</span><h1>Visualization</h1><p>Charts use the selected dates and item filter.</p></div></section>
+<div class="card"><form method="get" class="actions report-filter">
+  <div><label for="{{ form.start.id_for_label }}">From</label>{{ form.start }}{{ form.start.errors }}</div>
+  <div><label for="{{ form.end.id_for_label }}">Through</label>{{ form.end }}{{ form.end.errors }}</div>
+  <div><label for="{{ form.item.id_for_label }}">Item for stock/ledger charts</label>{{ form.item }}{{ form.item.errors }}</div>
+  <button type="submit">Update visualizations</button>
+</form></div>
+{% if form.is_valid %}<div class="chart-grid">{% for chart in charts %}{% include "shared/chart_card.html" with chart=chart %}{% endfor %}</div>{% endif %}
+{% endblock %}

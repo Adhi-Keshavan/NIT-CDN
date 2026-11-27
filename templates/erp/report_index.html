@@ -1,10 +1,18 @@
 {% extends "erp/business_base.html" %}
 {% block title %}Reports{% endblock %}
 {% block content %}
-<section class="hero"><div><span class="eyebrow">Admin reports</span><h1>Registers and analysis</h1><p>Choose a report, set the inclusive date range, then export the same rows as CSV or PDF.</p></div></section>
+<section class="hero"><div><span class="eyebrow">Admin reports</span><h1>Registers and analysis</h1><p>Filter the reports, open a register for its source rows and exports, or view the charts in one place.</p></div></section>
+<div class="card"><form method="get" class="actions report-filter">
+  <div><label for="{{ form.start.id_for_label }}">From</label>{{ form.start }}{{ form.start.errors }}</div>
+  <div><label for="{{ form.end.id_for_label }}">Through</label>{{ form.end }}{{ form.end.errors }}</div>
+  <div><label for="{{ form.item.id_for_label }}">Item for stock/ledger charts</label>{{ form.item }}{{ form.item.errors }}</div>
+  <button type="submit">Update overview</button>
+</form></div>
+<div class="section-heading"><div><h2>Report registers</h2><span class="muted">Open a report for its full table and exports.</span></div></div>
 <div class="grid" style="margin-top:1rem">
-  {% for key, spec in reports.items %}
-  <div class="feature-card"><div><h2>{{ spec.0 }}</h2><p>Filter by date and inspect the source records.</p></div><a class="button" href="{% url 'report_detail' key %}">Open report →</a></div>
+  {% for report in report_links %}
+  <div class="feature-card"><div><h2>{{ report.title }}</h2><p>View filtered source rows and download CSV or PDF.</p></div><a class="button" href="{{ report.url }}">Open report →</a></div>
   {% endfor %}
+  {% if form.is_valid %}<div class="feature-card"><div><span class="eyebrow">Charts and trends</span><h2>Visualization</h2><p>View visual summaries for the selected period.</p></div><a class="button" href="{{ visualization_url }}">Open report →</a></div>{% endif %}
 </div>
 {% endblock %}
