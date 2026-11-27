@@ -2,15 +2,24 @@
 
 **An order-to-audit ERP for small food manufacturers.**
 
-NIT-CDN is a Django application that connects customer orders, purchasing, production, inventory, GST invoicing, payments, and audit-ready reporting in a single workflow. Every stock movement, cost, and invoice is traceable to a source document and a user.
+NIT-CDN is a Django-based ERP application that connects customer orders, purchasing, production, inventory, GST invoicing, payments, and audit-ready reporting in a single workflow. Every stock movement, cost, and invoice is traceable to a source document and a user.
 
-> **Status:** Working benchmark prototype. Configure and verify real GSTIN, HSN, company, and customer data before issuing business invoices. See [Current Limitations](#current-limitations).
+> **Project Status:** Working benchmark prototype. Configure and verify real GSTIN, HSN, company, and customer data before issuing business invoices. See [Current Limitations](#current-limitations).
+
+## Live Demo
+
+- **Live Application:** [Add your Render deployment URL](https://nit-cdn-demo.onrender.com)
+- **GitHub Repository:** [NIT-CDN](https://github.com/Adhi-Keshavan/NIT-CDN.git)
 
 ---
 
 ## Table of Contents
 
+- [Project Overview](#project-overview)
+- [Technology Stack](#technology-stack)
 - [Features](#features)
+- [Application Screenshots](#application-screenshots)
+- [System Architecture](#system-architecture)
 - [Quick Start](#quick-start)
 - [Configuration](#configuration)
 - [Database Options](#database-options)
@@ -19,29 +28,121 @@ NIT-CDN is a Django application that connects customer orders, purchasing, produ
 - [Ledger and Costing Rules](#ledger-and-costing-rules)
 - [Reports and Audit](#reports-and-audit)
 - [Testing and Verification](#testing-and-verification)
+- [Individual Contribution](#individual-contribution)
 - [Documentation](#documentation)
 - [Current Limitations](#current-limitations)
+- [Future Improvements](#future-improvements)
+
+---
+
+## Project Overview
+
+Small food manufacturers often manage customer orders, raw material purchases, production activities, inventory, invoices, and payments using separate systems or manual records.
+
+NIT-CDN addresses this problem by bringing these operations into a unified ERP workflow.
+
+The application provides centralized management of business operations while maintaining traceability across inventory movements, production costs, sales transactions, invoices, and audit events.
+
+## Technology Stack
+
+| Category | Technology |
+|---|---|
+| Backend | Python, Django |
+| Frontend | HTML, CSS, JavaScript |
+| Database | SQLite, PostgreSQL |
+| Hosted Database | Supabase PostgreSQL |
+| Deployment | Render |
+| Version Control | Git, GitHub |
+
+*Update this table if your actual implementation uses additional technologies.*
 
 ---
 
 ## Features
 
 | Area | Capabilities |
-| --- | --- |
-| **Access control** | Role-based workspaces for administrators, salespeople, and production staff. New signups stay inactive until an administrator approves them. |
-| **Inventory** | Stock ledger of signed receipts and issues; balances are derived from posted movements, never stored as editable totals. |
-| **Production** | Batch requirements from a bill of materials (BOM), common unit conversions, and recorded yield and material variances with alert thresholds. |
+|---|---|
+| **Access Control** | Role-based workspaces for administrators, salespeople, and production staff. New signups stay inactive until administrator approval. |
+| **Inventory** | Stock ledger of signed receipts and issues; balances are derived from posted movements. |
+| **Production** | Batch requirements from a bill of materials (BOM), unit conversions, recorded yield and material variances. |
 | **Costing** | Moving weighted-average material cost; production costs are snapshotted when a run is posted. |
-| **Sales** | Order review and approval with stock checks, GST invoice PDFs, dispatch, payment collection, and full credit notes for unpaid invoices. |
-| **Reporting** | Date-filtered sales, GST, purchase, stock, production, and collections reports with CSV and PDF export, plus a dedicated visualizations page. |
-| **Audit** | User- and timestamp-stamped audit events for key posting and invoice actions; issued invoices are immutable. |
+| **Sales** | Order review and approval, stock checks, GST invoice PDFs, dispatch, payment collection, and credit notes. |
+| **Reporting** | Date-filtered sales, GST, purchase, stock, production, and collections reports with CSV and PDF export. |
+| **Audit** | User- and timestamp-stamped audit events for key posting and invoice actions. |
+
+---
+
+## Application Screenshots
+
+The following screenshots demonstrate the major modules and workflows of the NIT-CDN ERP application.
+
+### 1. Dashboard
+
+![Dashboard](Screenshots/Overview.png)
+
+### 2. Stock Management
+
+![Inventory Management](Screenshots/Stock.png)
+
+### 3. Production Management
+
+![Production Management](Screenshots/Production.png)
+
+### 4. Sales and Order Management
+
+![Sales Management](Screenshots/Sales.png)
+
+### 5. Reports and Analytics
+
+![Reports and Analytics](Screenshots/Visualization.png)
+
+### 6. Admin
+![Admin Dashboard](Screenshots/Admin.png)
+
+### 7. Salesman
+![Salesman Dashboard](Screenshots/Sales.png)
+
+> Add your actual application screenshots inside a folder named `screenshots` in the project root. Use the filenames specified above or update the image paths accordingly.
+
+---
+
+## System Architecture
+
+NIT-CDN follows a Django-based application architecture.
+
+```text
+              User
+               |
+               v
+       Frontend Interface
+       (HTML, CSS, JS)
+               |
+               v
+        Django Backend
+               |
+       -------------------
+       |        |        |
+       v        v        v
+    Sales   Inventory  Production
+       |        |        |
+       -------------------
+               |
+               v
+        Database Layer
+       SQLite / PostgreSQL
+               |
+               v
+       Reports and Audit
+```
+
+---
 
 ## Quick Start
 
 ### Requirements
 
 - Python 3.10 or newer
-- Windows PowerShell (commands below). macOS and Linux users can run the equivalent Python commands.
+- Windows PowerShell (commands below). macOS and Linux users can run equivalent Python commands.
 
 ### 1. Install
 
@@ -55,39 +156,29 @@ Copy-Item .env.example .env
 
 ### 2. Configure
 
-Edit `.env` (see [Configuration](#configuration)), then generate a private secret key:
+Edit `.env` and generate a private secret key:
 
 ```powershell
 .\.venv\Scripts\python.exe -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())"
 ```
 
-### 3. Run the benchmark demo
+### 3. Run the Benchmark Demo
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\run_local.ps1
 ```
 
-This single command:
+This command:
 
-1. Uses an isolated local SQLite database (`db.local.sqlite3`)
-2. Applies migrations
-3. Loads the benchmark data
-4. Runs Django's system check
-5. Starts the development server
+1. Uses an isolated local SQLite database (`db.local.sqlite3`).
+2. Applies migrations.
+3. Loads benchmark data.
+4. Runs Django's system check.
+5. Starts the development server.
 
-It overrides `DATABASE_URL` for its own process only, so it never connects to Supabase.
+Open http://127.0.0.1:8000/login/ and sign in using a demo account.
 
-Open <http://127.0.0.1:8000/login/> and sign in with a [demo account](#demo-accounts-and-access-control).
-
-To prepare the database without starting the server:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\run_local.ps1 -Database db.local.sqlite3 -NoServer
-```
-
-### Running Django commands manually
-
-Use this path when you intentionally want Django to use the `DATABASE_URL` from `.env`:
+### Running Django Commands Manually
 
 ```powershell
 .\.venv\Scripts\python.exe manage.py migrate
@@ -97,166 +188,206 @@ Use this path when you intentionally want Django to use the `DATABASE_URL` from 
 
 `seed_benchmark` is idempotent: re-running it updates benchmark records without creating duplicates.
 
+---
+
 ## Configuration
 
-Settings are read from `.env`. This file contains environment-specific secrets and **must not be committed**.
+Settings are read from `.env`. This file contains environment-specific secrets and must not be committed.
 
-| Variable | Local development value | Notes |
-| --- | --- | --- |
-| `SECRET_KEY` | A private random value | Generate with the command above. |
-| `DEBUG` | `True` | Set to `False` in any shared or production deployment. |
+| Variable | Local Development Value | Notes |
+|---|---|---|
+| `SECRET_KEY` | Private random value | Generate using the command above. |
+| `DEBUG` | `True` | Set to `False` in shared or production deployment. |
 | `DATABASE_URL` | `sqlite:///db.sqlite3` | Use a PostgreSQL URI for Supabase. |
+
+---
 
 ## Database Options
 
-| Option | When to use | Command / setting |
-| --- | --- | --- |
-| **Local SQLite runner** | Demos and evaluation | `scripts/run_local.ps1` (always SQLite) |
-| **SQLite via `.env`** | Manual local development | `DATABASE_URL=sqlite:///db.sqlite3` |
-| **Supabase PostgreSQL** | Hosted database | See below |
+| Option | When to Use |
+|---|---|
+| Local SQLite | Demonstrations and evaluation |
+| SQLite via `.env` | Manual local development |
+| Supabase PostgreSQL | Hosted database |
 
 ### Using Supabase PostgreSQL
 
-1. In Supabase, open **Connect** and copy the PostgreSQL connection URI. Use the **Session pooler** URI if your network requires a pooled connection.
-2. Set it in `.env`, including the password and SSL mode:
+1. Open Connect in Supabase and copy the PostgreSQL connection URI.
+2. Set the connection string in `.env`.
+3. Replace the placeholders with your project values.
+4. Apply migrations:
 
-   ```text
-   DATABASE_URL=postgresql://postgres.PROJECT_REF:URL_ENCODED_PASSWORD@POOLER_HOST:5432/postgres?sslmode=require
-   ```
+```powershell
+.\.venv\Scripts\python.exe manage.py migrate
+.\.venv\Scripts\python.exe manage.py seed_benchmark
+```
 
-3. Replace the placeholders with your project values and **URL-encode reserved characters** in the password.
-4. Apply the schema and load the benchmark:
+Django migrations create the required tables.
 
-   ```powershell
-   .\.venv\Scripts\python.exe manage.py migrate
-   .\.venv\Scripts\python.exe manage.py seed_benchmark
-   ```
-
-Django migrations create all required tables; do not create them manually in the Supabase Table Editor.
+---
 
 ## Demo Accounts and Access Control
 
-The benchmark creates the accounts below. The password for each is `BenchmarkDemo2026!`.
+The benchmark creates the following accounts.
 
-| Role | Username | Main workspace |
-| --- | --- | --- |
-| Admin | `factory_admin` | Overview, order review, access approvals, reports, ERP administration |
+**Demo Password:** `BenchmarkDemo2026!`
+
+| Role | Username | Main Workspace |
+|---|---|---|
+| Admin | `factory_admin` | Overview, order review, access approvals, reports |
 | Production | `production_supervisor` | Purchases, production runs, stock |
-| Salesperson | `salesman_a` | Create orders, view own orders |
-| Salesperson | `salesman_b` | Create orders, view own orders |
+| Salesperson | `salesman_a` | Create orders and view own orders |
+| Salesperson | `salesman_b` | Create orders and view own orders |
 
 > **Security:** These are demo credentials. Replace them before exposing any deployment.
 
-- The benchmark admin is a **business administrator**, not a Django superuser. Create a full Django administrator with:
+New signups remain inactive until an administrator approves them.
 
-  ```powershell
-  .\.venv\Scripts\python.exe manage.py createsuperuser
-  ```
-
-- New signups request a role and remain **inactive** until an administrator approves them on the People/access page. A signup cannot grant itself administrator access.
+---
 
 ## Benchmark Walkthrough
 
-The fixture in [`data/benchmark.json`](data/benchmark.json) creates:
+The benchmark fixture creates:
 
-- **Murukku 200 g** and its five BOM components
-- Two customers and four demo users
-- Opening stock dated 2026-11-01
-- An expected yield of 200 packets per batch
+- Murukku 200 g and its five BOM components.
+- Two customers and four demo users.
+- Opening stock dated 2026-11-01.
+- Expected yield of 200 packets per batch.
 
-The fixture does **not** include real company or customer GSTINs, or a product HSN code.
+### Part 1: Purchase and Production
 
-### Part 1: Purchase and production
+1. Sign in as `production_supervisor`.
+2. Receive 60 kg flour at ₹45/kg.
+3. Start one Murukku 200 g production batch.
+4. Record actual material usage and production yield.
+5. Record labour and gas/power expenses.
+6. Post the production run.
 
-1. Sign in as `production_supervisor` and receive **60 kg flour at ₹45/kg**. Flour stock rises from 100 kg to 160 kg.
-2. Start one Murukku 200 g batch. The BOM requires 40 kg flour, 10 L oil, 1.2 kg spice, 200 pouches, and 10 cartons, for 200 expected packets.
-3. Record actual issues: 40 kg flour, 10.5 L oil, 1.2 kg spice, 194 pouches, 9 cartons. Record 6 damaged pouches and **188 good packets**, then post the run.
-4. The run flags **+5% oil use** and **−6% yield** against the 3% alert threshold. Add ₹1,200 labour and ₹600 gas/power. The benchmark cost is **₹31.14 per good packet**.
+The benchmark records material and yield variances against configured thresholds.
 
-### Part 2: Order, invoice, dispatch, and payment
+### Part 2: Order, Invoice, Dispatch and Payment
 
-1. Complete Part 1 first; finished stock should be **238 packets**.
-2. Sign in as `salesman_a` and submit Retailer A's order for **150 packets at ₹50 each**.
-3. Sign in as `factory_admin`, review the order, and approve it once the stock check shows 238 available.
-4. Before invoicing, enter the company's actual name, address, state code, and GSTIN under **Company settings**. Add the product's actual HSN and customer details in ERP administration.
-5. Issue the invoice. Expected benchmark values:
+1. Sign in as `salesman_a` and submit Retailer A's order.
+2. Sign in as `factory_admin` and review the order.
+3. Configure company and customer details.
+4. Issue the GST invoice.
+5. Dispatch the order.
+6. Record the customer payment.
 
-   | Component | Amount |
-   | --- | --- |
-   | Taxable value | ₹7,500.00 |
-   | CGST | ₹187.50 |
-   | SGST | ₹187.50 |
-   | **Total** | **₹7,875.00** |
+A second salesperson can submit an order that demonstrates how the system handles insufficient stock.
 
-6. Dispatch the order. Finished stock falls from 238 to **88 packets**. Record a ₹4,000 payment; Retailer A then owes **₹3,875**.
-7. As `salesman_b`, submit Distributor B's 120-packet order. It faces a **32-packet shortage** against the 88-packet balance and cannot be approved.
+---
 
 ## Ledger and Costing Rules
 
-- **Signed movements.** A posted stock movement has an item, signed quantity, unit, date, and source document. Positive quantities add stock; negative quantities remove it.
-- **Derived balances.** Balances sum each movement's converted base quantity, optionally through a selected date. Draft purchases and production runs do not affect stock.
-- **Safe posting.** Purchases, production runs, adjustments, and dispatches post transactionally. Duplicate posting is prevented, and stock is checked before any issue is recorded.
-- **Costing.** Production material issues use the moving weighted-average cost at posting time. A run stores its material rates and extended costs, so later purchases never rewrite recorded cost.
-- **Wastage.** Wastage is included in the quantity issued. In the benchmark, 194 pouches are issued and 6 are recorded as damaged; the 6 are not deducted a second time.
-- **Alerts.** Material and yield alerts trigger when the absolute variance exceeds 3%.
+- **Signed Movements:** Positive quantities add stock; negative quantities remove stock.
+- **Derived Balances:** Stock balances are calculated from posted movements.
+- **Safe Posting:** Purchases, production runs, adjustments, and dispatches post transactionally.
+- **Costing:** Production material issues use moving weighted-average cost.
+- **Wastage:** Wastage is included in the quantity issued.
+- **Alerts:** Material and yield alerts trigger when the configured variance threshold is exceeded.
+
+---
 
 ## Reports and Audit
 
-### Reports
+Administrators can access reports through the Reports section.
 
-Administrators can open **Reports** at `/reports/`. Each report supports inclusive **From** and **Through** dates and exports to **CSV** and **PDF**.
+Available reports include:
 
 | Report | Purpose |
-| --- | --- |
-| Sales register | Invoiced sales for the period |
-| GST summary | Tax collected by component |
-| Purchase register | Material receipts and costs |
-| Stock summary | Opening stock, period movements, and closing stock through the end date |
-| Stock ledger | Movement-level detail (filterable by item) |
-| Production variance/cost | Yield and material variances with costs |
-| Collections/outstanding | Payments received and balances due |
+|---|---|
+| Sales Register | Invoiced sales for the period |
+| GST Summary | Tax collected by component |
+| Purchase Register | Material receipts and costs |
+| Stock Summary | Opening stock, movements, and closing stock |
+| Stock Ledger | Movement-level inventory details |
+| Production Variance/Cost | Yield and material variances |
+| Collections/Outstanding | Payments received and balances due |
 
-The separate **Visualization** card opens `/reports/visualizations/`, where charts summarize the selected period.
+Reports support CSV and PDF exports.
 
-### Invoice integrity and credit notes
+### Invoice Integrity
 
-- Issued invoices preserve the seller, customer, HSN, price, tax, and line values used at issue time.
+- Issued invoices preserve seller, customer, HSN, price, and tax information.
 - Invoices cannot be silently edited or deleted through the application.
-- An administrator can issue a **dated, reasoned full credit note** for an unpaid invoice.
-- A credit note does **not** automatically return dispatched goods to stock.
+- Administrators can issue dated, reasoned full credit notes for unpaid invoices.
 
-### Audit trail
+### Audit Trail
 
-Key posting and invoice actions record the acting user and a timestamp.
+Key posting and invoice actions record the acting user and timestamp, supporting transaction traceability.
+
+---
 
 ## Testing and Verification
 
-Run the following from PowerShell. The temporary `DATABASE_URL` directs tests to local SQLite even if `.env` points to Supabase.
+Run the following commands from PowerShell:
 
 ```powershell
 .\.venv\Scripts\python.exe manage.py check
+
 .\.venv\Scripts\python.exe manage.py makemigrations --check --dry-run
+
 $env:DATABASE_URL = "sqlite:///db.tests.sqlite3"
+
 .\.venv\Scripts\python.exe manage.py test
+
 Remove-Item Env:DATABASE_URL
 ```
 
-The test suite covers role access, stock posting, the production benchmark, order and invoice totals, dispatch, payments, report exports, audit events, and invoice immutability.
+The test suite covers role access, stock posting, production benchmarks, order and invoice totals, dispatch, payments, report exports, audit events, and invoice immutability.
+
+---
+
+## Individual Contribution
+
+My work on NIT-CDN involved developing and integrating the ERP application's core business workflows.
+
+Key areas of contribution:
+
+- Application development using Python and Django.
+- Implementation of inventory tracking and stock management workflows.
+- Development of production workflows and costing calculations.
+- Integration of sales, order management, and invoicing functionalities.
+- Implementation of reporting and audit-related features.
+- Database integration and application deployment.
+
+---
 
 ## Documentation
 
-- [Design Note](docs/DESIGN_NOTE.md): schema overview, unit-conversion assumptions, valuation details, and known gaps.
-- [Benchmark fixture](data/benchmark.json): the seed data used by the demo and tests.
+- **Design Note:** `docs/DESIGN_NOTE.md` – Schema overview, unit-conversion assumptions, valuation details, and known gaps.
+- **Benchmark Fixture:** `data/benchmark.json` – Seed data used by the demo and tests.
+
+---
 
 ## Current Limitations
 
-This project is a working benchmark prototype. Before issuing business invoices, configure and verify actual GSTIN, HSN, company, and customer data.
+NIT-CDN is currently a working benchmark prototype.
+
+Before issuing business invoices, configure and verify actual GSTIN, HSN, company, and customer data.
 
 Not currently implemented:
 
-- Partial credit notes
-- Refunds for paid invoices
-- Automated returned-goods processing
-- Digital signing
-- E-invoicing
-- GST return filing
+- Partial credit notes.
+- Refunds for paid invoices.
+- Automated returned-goods processing.
+- Digital signing.
+- E-invoicing.
+- GST return filing.
+
+---
+
+## Future Improvements
+
+Potential future enhancements include:
+
+- Integration with external accounting systems.
+- Advanced business analytics and dashboards.
+- Automated GST-related workflows.
+- Enhanced inventory forecasting.
+- Additional production and financial reporting capabilities.
+
+---
+
+**Developed as an ERP solution for streamlining operations and improving traceability in small food manufacturing businesses.**
